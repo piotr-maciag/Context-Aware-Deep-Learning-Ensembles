@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 
 
 FEATURE_SUFFIXES: tuple[str, ...] = ("r", "g", "b", "s", "d")
+MISSING_VALUE_SENTINELS: tuple[float, ...] = (-999.0,)
 
 
 @dataclass(frozen=True)
@@ -124,9 +125,17 @@ def load_cell_array(
 
 def _load_matrix(path: Path) -> np.ndarray:
     try:
-        return np.loadtxt(path, dtype=np.float32, delimiter=",")
+        matrix = np.loadtxt(path, dtype=np.float32, delimiter=",")
     except ValueError:
-        return np.loadtxt(path, dtype=np.float32)
+        matrix = np.loadtxt(path, dtype=np.float32)
+    return _replace_missing_sentinels(matrix)
+
+
+def _replace_missing_sentinels(matrix: np.ndarray) -> np.ndarray:
+    matrix = np.array(matrix, dtype=np.float32, copy=True)
+    for sentinel in MISSING_VALUE_SENTINELS:
+        matrix[matrix == sentinel] = np.nan
+    return matrix
 
 
 class BeachCellDataset(Dataset):
