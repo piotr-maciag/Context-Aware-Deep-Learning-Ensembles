@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
-from Source.beach_dataset import FEATURE_SUFFIXES, _as_channel_tensor, load_cell_array
+from Source.beach_dataset import FEATURE_SUFFIXES, _as_channel_tensor, load_cell_context_array
 from Source.models import build_convnext_tiny
 from Source.training import get_device
 
@@ -88,12 +88,14 @@ class CellInferenceDataset(Dataset):
         mean: Sequence[float],
         std: Sequence[float],
         feature_suffixes: Sequence[str] = FEATURE_SUFFIXES,
+        context_radius: int = 0,
     ) -> None:
         self.source_root = Path(source_root)
         self.date = str(date)
         self.cell_ids = [str(cell_id) for cell_id in cell_ids]
         self.image_size = int(image_size)
         self.feature_suffixes = tuple(feature_suffixes)
+        self.context_radius = int(context_radius)
         self.mean = _as_channel_tensor(mean)
         self.std = _as_channel_tensor(std)
 
@@ -102,11 +104,12 @@ class CellInferenceDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, str]:
         cell_id = self.cell_ids[index]
-        array = load_cell_array(
+        array = load_cell_context_array(
             self.source_root,
             self.date,
             cell_id,
             self.feature_suffixes,
+            context_radius=self.context_radius,
         )
         x = torch.from_numpy(array)
         x = F.interpolate(

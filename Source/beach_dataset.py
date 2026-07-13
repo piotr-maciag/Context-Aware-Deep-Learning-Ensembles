@@ -13,6 +13,9 @@ from torch.utils.data import Dataset
 
 FEATURE_SUFFIXES: tuple[str, ...] = ("r", "g", "b", "s", "d")
 MISSING_VALUE_SENTINELS: tuple[float, ...] = (-999.0,)
+GRID_ROWS = 1530
+GRID_COLUMNS = 1386
+CELL_MATRIX_SIZE = 20
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,43 @@ def cell_file_paths(
 ) -> list[Path]:
     cell_dir = annotated_root / str(date)
     return [cell_dir / f"{cell_id}{suffix}.txt" for suffix in feature_suffixes]
+
+
+def context_radius_to_window_size(context_radius: int) -> int:
+    context_radius = int(context_radius)
+    if context_radius < 0:
+        raise ValueError("context_radius must be a non-negative integer.")
+    return 2 * context_radius + 1
+
+
+def cell_id_to_grid_coordinates(
+    cell_id: str | int,
+    grid_rows: int = GRID_ROWS,
+    grid_columns: int = GRID_COLUMNS,
+) -> tuple[int, int]:
+    numeric_id = int(cell_id)
+    if numeric_id < 1 or numeric_id > grid_rows * grid_columns:
+        raise ValueError(
+            f"cell_id must be between 1 and {grid_rows * grid_columns}, got {cell_id}"
+        )
+    zero_based = numeric_id - 1
+    row = zero_based % grid_rows
+    column = zero_based // grid_rows
+    return row, column
+
+
+def grid_coordinates_to_cell_id(
+    row: int,
+    column: int,
+    grid_rows: int = GRID_ROWS,
+    grid_columns: int = GRID_COLUMNS,
+) -> str:
+    if row < 0 or row >= grid_rows or column < 0 or column >= grid_columns:
+        raise ValueError(
+            f"Grid coordinates out of bounds: row={row}, column={column}, "
+            f"grid_rows={grid_rows}, grid_columns={grid_columns}"
+        )
+    return str(column * grid_rows + row + 1)
 
 
 def find_missing_files(
@@ -123,11 +163,70 @@ def load_cell_array(
     return np.stack(channels, axis=0)
 
 
+def load_cell_context_array(
+    annotated_root: Path,
+    date: str,
+    cell_id: str,
+    feature_suffixes: Sequence[str] = FEATURE_SUFFIXES,
+    context_radius: int = 0,
+    grid_rows: int = GRID_ROWS,
+    grid_columns: int = GRID_COLUMNS,
+) -> np.ndarray:
+    window_size = context_radius_to_window_size(context_radius)
+    if window_size == 1:
+        return load_cell_array(annotated_root, date, cell_id, feature_suffixes)
+
+    center_row, center_column = cell_id_to_grid_coordinates(cell_id, grid_rows, grid_columns)
+    channels = len(feature_suffixes)
+    mosaic = np.full(
+        (
+            channels,
+            window_size * CELL_MATRIX_SIZE,
+            window_size * CELL_MATRIX_SIZE,
+        ),
+        np.nan,
+        dtype=np.float32,
+    )
+
+    for row_offset in range(-context_radius, context_radius + 1):
+        for column_offset in range(-context_radius, context_radius + 1):
+            neighbor_row = center_row + row_offset
+            neighbor_column = center_column + column_offset
+            if (
+                neighbor_row < 0
+                or neighbor_row >= grid_rows
+                or neighbor_column < 0
+                or neighbor_column >= grid_columns
+            ):
+                continue
+
+            neighbor_id = grid_coordinates_to_cell_id(neighbor_row, neighbor_column, grid_rows, grid_columns)
+            try:
+                neighbor = load_cell_array(annotated_root, date, neighbor_id, feature_suffixes)
+            except FileNotFoundError:
+                if neighbor_id == str(cell_id):
+                    raise
+                continue
+
+            row_start = (row_offset + context_radius) * CELL_MATRIX_SIZE
+            column_start = (column_offset + context_radius) * CELL_MATRIX_SIZE
+            mosaic[
+                :,
+                row_start : row_start + CELL_MATRIX_SIZE,
+                column_start : column_start + CELL_MATRIX_SIZE,
+            ] = neighbor
+
+    return mosaic
+
+
 def _load_matrix(path: Path) -> np.ndarray:
     try:
-        matrix = np.loadtxt(path, dtype=np.float32, delimiter=",")
-    except ValueError:
-        matrix = np.loadtxt(path, dtype=np.float32)
+        try:
+            matrix = np.loadtxt(path, dtype=np.float32, delimiter=",")
+        except ValueError:
+            matrix = np.loadtxt(path, dtype=np.float32)
+    except OSError as exc:
+        raise OSError(f"Could not read matrix file {path}: {exc}") from exc
     return _replace_missing_sentinels(matrix)
 
 
@@ -144,17 +243,19 @@ class BeachCellDataset(Dataset):
         frame: pd.DataFrame,
         annotated_root: Path,
         class_to_idx: dict[str, int],
-        image_size: int = 64,
+        image_size: int | None = 64,
         mean: Sequence[float] | None = None,
         std: Sequence[float] | None = None,
         feature_suffixes: Sequence[str] = FEATURE_SUFFIXES,
         augment: bool = False,
+        context_radius: int = 0,
     ) -> None:
         self.frame = frame.reset_index(drop=True).copy()
         self.annotated_root = Path(annotated_root)
         self.class_to_idx = class_to_idx
-        self.image_size = image_size
+        self.image_size = int(image_size) if image_size is not None else None
         self.feature_suffixes = tuple(feature_suffixes)
+        self.context_radius = int(context_radius)
         self.mean = _as_channel_tensor(mean) if mean is not None else None
         self.std = _as_channel_tensor(std) if std is not None else None
         self.augment = augment
@@ -164,21 +265,23 @@ class BeachCellDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         row = self.frame.iloc[index]
-        array = load_cell_array(
+        array = load_cell_context_array(
             self.annotated_root,
             str(row["date"]),
             str(row["cell_id"]),
             self.feature_suffixes,
+            context_radius=self.context_radius,
         )
         x = torch.from_numpy(array)
         if self.augment:
             x = _augment_spatial(x)
-        x = F.interpolate(
-            x.unsqueeze(0),
-            size=(self.image_size, self.image_size),
-            mode="bilinear",
-            align_corners=False,
-        ).squeeze(0)
+        if self.image_size is not None:
+            x = F.interpolate(
+                x.unsqueeze(0),
+                size=(self.image_size, self.image_size),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0)
 
         if self.mean is not None and self.std is not None:
             x = torch.where(torch.isfinite(x), x, self.mean)
@@ -209,13 +312,20 @@ def compute_channel_stats(
     frame: pd.DataFrame,
     annotated_root: Path,
     feature_suffixes: Sequence[str] = FEATURE_SUFFIXES,
+    context_radius: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     channel_sum = np.zeros(len(feature_suffixes), dtype=np.float64)
     channel_sq_sum = np.zeros(len(feature_suffixes), dtype=np.float64)
     channel_count = np.zeros(len(feature_suffixes), dtype=np.float64)
 
     for row in frame.itertuples(index=False):
-        array = load_cell_array(annotated_root, row.date, row.cell_id, feature_suffixes)
+        array = load_cell_context_array(
+            annotated_root,
+            row.date,
+            row.cell_id,
+            feature_suffixes,
+            context_radius=context_radius,
+        )
         finite = np.isfinite(array)
         cleaned = np.where(finite, array, 0.0)
         channel_sum += cleaned.sum(axis=(1, 2))
