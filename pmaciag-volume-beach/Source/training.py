@@ -26,13 +26,14 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    show_progress: bool = True,
 ) -> dict[str, float]:
     model.train()
     total_loss = 0.0
     correct = 0
     total = 0
 
-    for x, y in tqdm(loader, desc="Training", leave=False):
+    for x, y in tqdm(loader, desc="Training", leave=False, disable=not show_progress):
         x = x.to(device)
         y = y.to(device)
 
@@ -57,13 +58,14 @@ def evaluate_loss_accuracy(
     criterion: nn.Module,
     device: torch.device,
     desc: str = "Evaluating",
+    show_progress: bool = True,
 ) -> dict[str, float]:
     model.eval()
     total_loss = 0.0
     correct = 0
     total = 0
 
-    for x, y in tqdm(loader, desc=desc, leave=False):
+    for x, y in tqdm(loader, desc=desc, leave=False, disable=not show_progress):
         x = x.to(device)
         y = y.to(device)
         logits = model(x)
@@ -88,6 +90,8 @@ def fit_model(
     checkpoint_path: Path | None = None,
     early_stopping_patience: int | None = None,
     early_stopping_min_delta: float = 0.0,
+    verbose: bool = True,
+    show_progress: bool = True,
 ) -> pd.DataFrame:
     history: list[dict[str, Any]] = []
     best_validation_loss = float("inf")
@@ -96,9 +100,21 @@ def fit_model(
     epochs_without_improvement = 0
 
     for epoch in range(1, epochs + 1):
-        train_metrics = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_metrics = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            show_progress=show_progress,
+        )
         validation_metrics = evaluate_loss_accuracy(
-            model, validation_loader, criterion, device, desc="Validation"
+            model,
+            validation_loader,
+            criterion,
+            device,
+            desc="Validation",
+            show_progress=show_progress,
         )
 
         row = {
@@ -110,11 +126,12 @@ def fit_model(
             "is_best_epoch": False,
         }
         history.append(row)
-        print(
-            f"Epoch {epoch:03d} | "
-            f"train loss={row['train_loss']:.4f}, acc={row['train_accuracy']:.4f} | "
-            f"val loss={row['validation_loss']:.4f}, acc={row['validation_accuracy']:.4f}"
-        )
+        if verbose:
+            print(
+                f"Epoch {epoch:03d} | "
+                f"train loss={row['train_loss']:.4f}, acc={row['train_accuracy']:.4f} | "
+                f"val loss={row['validation_loss']:.4f}, acc={row['validation_accuracy']:.4f}"
+            )
 
         improved = validation_metrics["loss"] < (best_validation_loss - early_stopping_min_delta)
         if improved:
@@ -136,10 +153,11 @@ def fit_model(
             and early_stopping_patience > 0
             and epochs_without_improvement >= early_stopping_patience
         ):
-            print(
-                f"Early stopping after epoch {epoch:03d}. "
-                f"Best validation loss was {best_validation_loss:.4f} at epoch {best_epoch:03d}."
-            )
+            if verbose:
+                print(
+                    f"Early stopping after epoch {epoch:03d}. "
+                    f"Best validation loss was {best_validation_loss:.4f} at epoch {best_epoch:03d}."
+                )
             break
 
     if best_state is not None:
@@ -153,13 +171,14 @@ def predict(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
+    show_progress: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
     y_true = []
     y_pred = []
     y_probability = []
 
-    for x, y in tqdm(loader, desc="Predicting", leave=False):
+    for x, y in tqdm(loader, desc="Predicting", leave=False, disable=not show_progress):
         x = x.to(device)
         logits = model(x)
         probabilities = torch.softmax(logits, dim=1)
