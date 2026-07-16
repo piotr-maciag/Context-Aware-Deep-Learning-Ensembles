@@ -140,7 +140,8 @@ def _run_grid_search_parallel(
 ) -> GridSearchResult:
     print(
         f"Running {len(parameter_grid)} grid configurations across "
-        f"{len(devices)} CUDA devices."
+        f"{len(devices)} CUDA devices.",
+        flush=True,
     )
     device_queue: Queue[torch.device] = Queue()
     for device in devices:
@@ -176,7 +177,8 @@ def _run_grid_search_parallel(
             print(
                 f"Finished grid run {row['run_index']} on {row['device']}: "
                 f"macro F1={row['validation_macro_f1']:.4f}, "
-                f"epochs={row['epochs_trained']}, config={result['config']}"
+                f"epochs={row['epochs_trained']}, config={result['config']}",
+                flush=True,
             )
 
     results = sorted(results, key=lambda result: result["summary_row"]["run_index"])
@@ -223,6 +225,10 @@ def _run_single_grid_config_from_queue(
 ) -> dict[str, Any]:
     device = device_queue.get()
     try:
+        print(
+            f"Starting grid run {run_index} on {device}: config={config}",
+            flush=True,
+        )
         return _run_single_grid_config(
             run_index=run_index,
             config=config,
@@ -263,7 +269,7 @@ def _run_single_grid_config(
     quiet: bool,
 ) -> dict[str, Any]:
     if not quiet:
-        print(f"\nGrid search run {run_index}: {config}")
+        print(f"\nGrid search run {run_index}: {config}", flush=True)
     torch.manual_seed(random_seed + run_index)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(random_seed + run_index)
@@ -327,7 +333,7 @@ def _run_single_grid_config(
         metric_trace_rows.append(metric_row)
 
     if not quiet:
-        print(f"Validation macro F1: {validation_score:.4f}")
+        print(f"Validation macro F1: {validation_score:.4f}", flush=True)
 
     state_dict = {
         key: value.detach().cpu().clone()
