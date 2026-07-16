@@ -130,7 +130,8 @@ def fit_model(
             print(
                 f"Epoch {epoch:03d} | "
                 f"train loss={row['train_loss']:.4f}, acc={row['train_accuracy']:.4f} | "
-                f"val loss={row['validation_loss']:.4f}, acc={row['validation_accuracy']:.4f}"
+                f"val loss={row['validation_loss']:.4f}, acc={row['validation_accuracy']:.4f}",
+                flush=True,
             )
 
         improved = validation_metrics["loss"] < (best_validation_loss - early_stopping_min_delta)
@@ -156,7 +157,8 @@ def fit_model(
             if verbose:
                 print(
                     f"Early stopping after epoch {epoch:03d}. "
-                    f"Best validation loss was {best_validation_loss:.4f} at epoch {best_epoch:03d}."
+                    f"Best validation loss was {best_validation_loss:.4f} at epoch {best_epoch:03d}.",
+                    flush=True,
                 )
             break
 

@@ -67,6 +67,10 @@ def run_grid_search(
     metric_trace_rows: list[dict[str, Any]] = []
 
     for run_index, config in enumerate(parameter_grid, start=1):
+        print(
+            f"Starting grid run {run_index} on {device}: config={config}",
+            flush=True,
+        )
         result = _run_single_grid_config(
             run_index=run_index,
             config=config,
@@ -81,11 +85,18 @@ def run_grid_search(
             early_stopping_patience=early_stopping_patience,
             early_stopping_min_delta=early_stopping_min_delta,
             random_seed=random_seed,
-            quiet=False,
+            quiet=True,
         )
 
         summary_rows.append(result["summary_row"])
         metric_trace_rows.extend(result["metric_trace_rows"])
+        row = result["summary_row"]
+        print(
+            f"Finished grid run {row['run_index']} on {row['device']}: "
+            f"macro F1={row['validation_macro_f1']:.4f}, "
+            f"epochs={row['epochs_trained']}, config={result['config']}",
+            flush=True,
+        )
 
         if result["validation_score"] > best_score:
             best_score = result["validation_score"]

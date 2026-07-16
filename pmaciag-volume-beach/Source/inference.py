@@ -297,7 +297,8 @@ def classify_date_directories(
 
     print(
         f"Classifying {len(date_dirs)} date folders across "
-        f"{len(devices)} CUDA devices."
+        f"{len(devices)} CUDA devices.",
+        flush=True,
     )
     device_queue: Queue[torch.device] = Queue()
     for worker_device in devices:
@@ -382,7 +383,8 @@ def _print_classification_summary(row: dict) -> None:
         f"Finished {row['date']} on {row['device']}: "
         f"classified {row['classified_cells']:,}, "
         f"skipped {row['incomplete_candidates']:,}, "
-        f"saved {row['output_path']}"
+        f"saved {row['output_path']}",
+        flush=True,
     )
 
 

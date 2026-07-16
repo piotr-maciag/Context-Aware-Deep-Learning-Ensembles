@@ -6,10 +6,16 @@
 # PyTorch CUDA 12.8 wheels are resolved from the PyTorch wheel index.
 --extra-index-url https://download.pytorch.org/whl/cu128
 
-jupyterlab>=4.0
-notebook>=7.0
+jupyterlab>=4.2
+jupyter-server>=2.14
+jupyterlab-server>=2.27
+jupyter-server-terminals>=0.5
+notebook>=7.2
 nbformat>=5.10
 ipykernel>=6.0
+ipywidgets>=8.1
+jinja2>=3.1
+tornado>=6.4
 pandas>=2.0
 openpyxl>=3.1
 tqdm>=4.66
