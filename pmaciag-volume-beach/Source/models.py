@@ -100,6 +100,40 @@ def build_vit_tiny(
     return model
 
 
+def build_swin_tiny(
+    num_classes: int,
+    in_channels: int = 5,
+    pretrained: bool = True,
+    model_name: str = "swin_tiny_patch4_window7_224",
+    dropout: float = 0.0,
+) -> nn.Module:
+    model = timm.create_model(
+        model_name,
+        pretrained=pretrained,
+        num_classes=num_classes,
+        drop_rate=dropout,
+    )
+    _adapt_timm_patch_embed(model, in_channels)
+    return model
+
+
+def build_efficientnetv2_s(
+    num_classes: int,
+    in_channels: int = 5,
+    pretrained: bool = True,
+    model_name: str = "tf_efficientnetv2_s",
+    dropout: float = 0.2,
+) -> nn.Module:
+    model = timm.create_model(
+        model_name,
+        pretrained=pretrained,
+        num_classes=num_classes,
+        drop_rate=dropout,
+    )
+    _adapt_timm_stem(model, in_channels)
+    return model
+
+
 def _adapt_timm_patch_embed(model: nn.Module, in_channels: int) -> None:
     projection = model.patch_embed.proj
     if projection.in_channels == in_channels:
@@ -117,6 +151,25 @@ def _adapt_timm_patch_embed(model: nn.Module, in_channels: int) -> None:
     )
     _initialize_first_conv(replacement, projection, in_channels)
     model.patch_embed.proj = replacement
+
+
+def _adapt_timm_stem(model: nn.Module, in_channels: int) -> None:
+    stem = model.conv_stem
+    if stem.in_channels == in_channels:
+        return
+
+    replacement = nn.Conv2d(
+        in_channels=in_channels,
+        out_channels=stem.out_channels,
+        kernel_size=stem.kernel_size,
+        stride=stem.stride,
+        padding=stem.padding,
+        dilation=stem.dilation,
+        groups=stem.groups,
+        bias=stem.bias is not None,
+    )
+    _initialize_first_conv(replacement, stem, in_channels)
+    model.conv_stem = replacement
 
 
 def _initialize_first_conv(replacement: nn.Conv2d, original: nn.Conv2d, in_channels: int) -> None:

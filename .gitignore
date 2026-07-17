@@ -21,6 +21,7 @@ dist/
 # Jupyter runtime/checkpoints
 .ipynb_checkpoints/
 */.ipynb_checkpoints/
+**/executed_notebooks/
 
 # OS/editor files
 .DS_Store

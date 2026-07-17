@@ -13,7 +13,13 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from Source.beach_dataset import FEATURE_SUFFIXES, _as_channel_tensor, load_cell_context_array
-from Source.models import build_convnext_tiny, build_small_cnn, build_vit_tiny
+from Source.models import (
+    build_convnext_tiny,
+    build_efficientnetv2_s,
+    build_small_cnn,
+    build_swin_tiny,
+    build_vit_tiny,
+)
 from Source.training import get_device
 
 
@@ -186,6 +192,22 @@ def load_model_for_inference(
             num_classes=len(idx_to_class_code),
             in_channels=len(feature_suffixes),
             dropout=float(best_config.get("dropout", 0.25)),
+        )
+    elif model_type == "swin_tiny":
+        model = build_swin_tiny(
+            num_classes=len(idx_to_class_code),
+            in_channels=len(feature_suffixes),
+            pretrained=False,
+            model_name=metadata.get("model_name", "swin_tiny_patch4_window7_224"),
+            dropout=float(best_config.get("dropout", 0.0)),
+        )
+    elif model_type == "efficientnetv2_s":
+        model = build_efficientnetv2_s(
+            num_classes=len(idx_to_class_code),
+            in_channels=len(feature_suffixes),
+            pretrained=False,
+            model_name=metadata.get("model_name", "tf_efficientnetv2_s"),
+            dropout=float(best_config.get("dropout", 0.2)),
         )
     else:
         raise ValueError(f"Unsupported model_type in inference metadata: {model_type}")
