@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from Source.beach_dataset import FEATURE_SUFFIXES, _as_channel_tensor, load_cell_context_array
-from Source.models import build_convnext_tiny
+from Source.models import build_convnext_tiny, build_small_cnn, build_vit_tiny
 from Source.training import get_device
 
 
@@ -151,6 +151,53 @@ def load_convnext_for_inference(
     return model
 
 
+def load_model_for_inference(
+    checkpoint_path: Path,
+    metadata: dict,
+    device: torch.device | None = None,
+) -> torch.nn.Module:
+    if device is None:
+        device = get_device()
+
+    model_type = metadata.get("model_type", "convnext_tiny")
+    idx_to_class_code = {
+        int(index): str(class_code)
+        for index, class_code in metadata["idx_to_class_code"].items()
+    }
+    feature_suffixes = metadata["feature_suffixes"]
+    best_config = metadata.get("best_config", {})
+
+    if model_type == "convnext_tiny":
+        model = build_convnext_tiny(
+            num_classes=len(idx_to_class_code),
+            in_channels=len(feature_suffixes),
+            pretrained=False,
+        )
+    elif model_type == "vit_tiny":
+        model = build_vit_tiny(
+            num_classes=len(idx_to_class_code),
+            in_channels=len(feature_suffixes),
+            pretrained=False,
+            model_name=metadata.get("model_name", "vit_tiny_patch16_224"),
+            dropout=float(best_config.get("dropout", 0.0)),
+        )
+    elif model_type == "small_cnn":
+        model = build_small_cnn(
+            num_classes=len(idx_to_class_code),
+            in_channels=len(feature_suffixes),
+            dropout=float(best_config.get("dropout", 0.25)),
+        )
+    else:
+        raise ValueError(f"Unsupported model_type in inference metadata: {model_type}")
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = checkpoint.get("state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    model.load_state_dict(state_dict)
+    model.to(device)
+    model.eval()
+    return model
+
+
 @torch.no_grad()
 def predict_cells(
     model: torch.nn.Module,
@@ -208,7 +255,7 @@ def classify_date_directory(
             "output_path": None,
         }
 
-    model = load_convnext_for_inference(checkpoint_path, metadata, device=device)
+    model = load_model_for_inference(checkpoint_path, metadata, device=device)
     dataset = CellInferenceDataset(
         source_root=source_root,
         date=date,
