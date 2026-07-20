@@ -1,0 +1,74 @@
+{
+  "model_type": "swin_tiny",
+  "checkpoint_filename": "swin_tiny_best.pt",
+  "model_name": "swin_tiny_patch4_window7_224",
+  "image_size": 224,
+  "context_radius": 2,
+  "context_window_size": 5,
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b",
+    "s",
+    "d"
+  ],
+  "in_channels": 5,
+  "num_classes": 10,
+  "class_to_idx": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9
+  },
+  "idx_to_class_code": {
+    "0": "0",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+    "6": "6",
+    "7": "7",
+    "8": "8",
+    "9": "9"
+  },
+  "class_name_by_code": {
+    "0": "Snow",
+    "1": "Dry sediment",
+    "2": "Wet sediment",
+    "3": "Water",
+    "4": "Bedrock",
+    "5": "Boulder",
+    "6": "Driftwood",
+    "7": "Algae",
+    "8": "Ice",
+    "9": "Anthropogenic"
+  },
+  "best_config": {
+    "learning_rate": 3e-05,
+    "weight_decay": 0.0001,
+    "dropout": 0.0,
+    "pretrained": true,
+    "context_radius": 2
+  },
+  "channel_mean": [
+    118.64652252197266,
+    122.68640899658203,
+    126.33900451660156,
+    17.4671573638916,
+    0.6036577224731445
+  ],
+  "channel_std": [
+    47.89235305786133,
+    49.060794830322266,
+    50.661888122558594,
+    14.551807403564453,
+    1.1081769466400146
+  ]
+}

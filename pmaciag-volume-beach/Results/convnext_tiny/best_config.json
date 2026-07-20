@@ -1,0 +1,6 @@
+{
+  "learning_rate": 3e-05,
+  "weight_decay": 0.001,
+  "pretrained": true,
+  "context_radius": 1
+}

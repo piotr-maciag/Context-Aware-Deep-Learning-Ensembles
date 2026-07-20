@@ -1,0 +1,69 @@
+{
+  "method": "validation_macro_f1_weighted_soft_voting",
+  "weights": {
+    "convnext_tiny": 0.25172480620077026,
+    "vit_tiny": 0.249340394498226,
+    "swin_tiny": 0.2503019527113668,
+    "efficientnetv2_s": 0.24863284658963689
+  },
+  "validation_macro_f1": {
+    "convnext_tiny": 0.9864728547399777,
+    "vit_tiny": 0.9771286925392599,
+    "swin_tiny": 0.9808968991369011,
+    "efficientnetv2_s": 0.9743559153315401
+  },
+  "class_to_idx": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9
+  },
+  "idx_to_class_code": {
+    "0": "0",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+    "6": "6",
+    "7": "7",
+    "8": "8",
+    "9": "9"
+  },
+  "models": {
+    "convnext_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/convnext_tiny",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/convnext_tiny/convnext_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/convnext_tiny/inference_metadata.json",
+      "context_radius": 1,
+      "image_size": 224
+    },
+    "vit_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/vit_tiny",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/vit_tiny/vit_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/vit_tiny/inference_metadata.json",
+      "context_radius": 2,
+      "image_size": 224
+    },
+    "swin_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/swin_tiny",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/swin_tiny/swin_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/swin_tiny/inference_metadata.json",
+      "context_radius": 2,
+      "image_size": 224
+    },
+    "efficientnetv2_s": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/efficientnetv2_s",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/efficientnetv2_s/efficientnetv2_s_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/efficientnetv2_s/inference_metadata.json",
+      "context_radius": 1,
+      "image_size": 224
+    }
+  }
+}
