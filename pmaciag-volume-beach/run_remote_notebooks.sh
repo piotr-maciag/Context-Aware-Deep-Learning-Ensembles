@@ -28,7 +28,7 @@ notebook_for_job() {
         vit) echo "train_vit_tiny_classifier.ipynb" ;;
         swin) echo "train_swin_tiny_classifier.ipynb" ;;
         efficientnet) echo "train_efficientnetv2_classifier.ipynb" ;;
-        ensemble) echo "evaluate_weighted_ensemble.ipynb" ;;
+        ensemble) echo "evaluate_ensemble.ipynb" ;;
         *) return 1 ;;
     esac
 }
