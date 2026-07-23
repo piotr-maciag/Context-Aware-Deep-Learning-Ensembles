@@ -243,22 +243,50 @@ def classify_date_directory_with_global_ensemble(
     num_workers: int,
     base_suffix: str,
     device: torch.device,
+    candidate_cell_ids: Sequence[str] | None = None,
 ) -> dict:
     """Classify one date with globally weighted probability averaging."""
     date = date_dir.name
     reference_metadata = artifacts[0].metadata
-    cell_ids, incomplete_count = discover_complete_cells_from_base_suffix(
-        date_dir,
-        feature_suffixes=reference_metadata["feature_suffixes"],
-        base_suffix=base_suffix,
-    )
+    if candidate_cell_ids is None:
+        cell_ids, incomplete_count = discover_complete_cells_from_base_suffix(
+            date_dir,
+            feature_suffixes=reference_metadata["feature_suffixes"],
+            base_suffix=base_suffix,
+        )
+    else:
+        cell_ids = []
+        incomplete_count = 0
+        seen_cell_ids = set()
+        for candidate_cell_id in candidate_cell_ids:
+            cell_id = str(candidate_cell_id).strip()
+            if not cell_id or cell_id in seen_cell_ids:
+                continue
+            seen_cell_ids.add(cell_id)
+            if all(
+                (date_dir / f"{cell_id}{suffix}.txt").is_file()
+                for suffix in reference_metadata["feature_suffixes"]
+            ):
+                cell_ids.append(cell_id)
+            else:
+                incomplete_count += 1
+
     if not cell_ids:
+        output_path = None
+        if candidate_cell_ids is not None:
+            output_dir = Path(output_root) / date
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / "classification.csv"
+            pd.DataFrame(columns=["date", "cell_id", "predicted_class"]).to_csv(
+                output_path,
+                index=False,
+            )
         return {
             "date": date,
             "classified_cells": 0,
             "incomplete_candidates": incomplete_count,
             "device": str(device),
-            "output_path": None,
+            "output_path": output_path,
         }
 
     combined_probabilities = None
@@ -291,6 +319,10 @@ def classify_date_directory_with_global_ensemble(
             models[artifact.name],
             loader,
             device,
+        )
+        print(
+            f"  {date}: finished {artifact.name} for {len(predicted_cell_ids):,} cells",
+            flush=True,
         )
         if predicted_cell_ids != expected_cell_ids:
             raise RuntimeError(f"Cell order changed during inference for {artifact.name}.")
