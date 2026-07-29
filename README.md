@@ -32,17 +32,16 @@ probability voting. The Small CNN is retained as a standalone baseline.
 ```text
 .
 |-- README.md
+|-- Data/
+|   |-- Raw/
+|   `-- Preprocessed/
+|-- Notebooks/
+|-- Results/
+|-- Source/
 |-- requirements.txt
 |-- requirements-remote-gpu-cu128.txt
-`-- pmaciag-volume-beach/
-    |-- Data/
-    |   |-- Raw/
-    |   `-- Preprocessed/
-    |-- Notebooks/
-    |-- Results/
-    |-- Source/
-    |-- run_remote_notebooks.sh
-    `-- ss_run_remote_notebooks.sh
+|-- run_remote_notebooks.sh
+`-- ss_run_remote_notebooks.sh
 ```
 
 `Source/` provides the shared dataset, model, training, grid-search, ensemble,
@@ -54,7 +53,7 @@ Generated outputs are written under `Results/`.
 The complete cell dataset is expected at:
 
 ```text
-pmaciag-volume-beach/Data/Raw/beach_all/<date>/
+Data/Raw/beach_all/<date>/
 ```
 
 For a cell identifier such as `1000956`, a date directory contains:
@@ -106,10 +105,9 @@ The remote requirements pin PyTorch 2.8.0, torchvision 0.23.0, and torchaudio
 python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
 ```
 
-Start JupyterLab from the project directory:
+Start JupyterLab from the repository root:
 
 ```bash
-cd pmaciag-volume-beach
 jupyter lab
 ```
 
@@ -151,7 +149,7 @@ do not copy the source dataset.
 ## Remote Batch Execution
 
 The launch scripts execute notebooks sequentially in a detached `nohup`
-pipeline. From `pmaciag-volume-beach/`, run:
+pipeline. From the repository root, run:
 
 ```bash
 ./run_remote_notebooks.sh all
@@ -171,7 +169,7 @@ Set `BEACH_PYTHON` when a specific interpreter is required:
 BEACH_PYTHON=/path/to/python ./run_remote_notebooks.sh all
 ```
 
-Each job writes a debug log to `pmaciag-volume-beach/`. Executed notebooks are
+Each job writes a debug log to the repository root. Executed notebooks are
 written to `Notebooks/executed_notebooks/`; this generated directory is ignored
 by Git.
 
@@ -188,3 +186,11 @@ recall, macro F1-score, Matthews correlation coefficient, exact confusion
 matrices, and one-vs-rest precision-recall curves. They also print LaTeX tables
 for aggregate metrics, per-class metrics, best backbones, and selected
 grid-search configurations.
+
+Model checkpoints (`*.pt`) are tracked through Git LFS. After cloning the
+repository, install Git LFS and materialize the checkpoints with:
+
+```bash
+git lfs install
+git lfs pull
+```

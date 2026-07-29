@@ -21,7 +21,7 @@ dist/
 # Jupyter runtime/checkpoints
 .ipynb_checkpoints/
 */.ipynb_checkpoints/
-pmaciag-volume-beach/Notebooks/executed_notebooks/
+Notebooks/executed_notebooks/
 
 
 # OS/editor files
