@@ -77,9 +77,12 @@ including unavailable neighboring cells, are filled with the corresponding
 training-channel means. Validation and test data do not contribute to these
 statistics.
 
-The split notebooks write first-stage and second-stage CSV files to
-`Data/Preprocessed/`. They contain dates, cell identifiers, labels, and split
-assignments; they do not copy the matrix files.
+The split notebooks write beach-surface files (`bs_dataset_splits.csv`,
+`bs_train_split.csv`, `bs_validation_split.csv`, and `bs_test_split.csv`) and
+grain-size files (`gs_dataset_splits.csv`, `gs_train_split.csv`,
+`gs_validation_split.csv`, and `gs_test_split.csv`) to `Data/Preprocessed/`.
+They contain dates, cell identifiers, labels, and split assignments; they do
+not copy the matrix files.
 
 ## Installation
 
