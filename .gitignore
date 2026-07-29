@@ -1,5 +1,7 @@
 # Data and generated experiment outputs
-Data/
+Data/*
+!Data/Preprocessed/
+!Data/Preprocessed/**
 
 
 # Local Python environment
