@@ -6,15 +6,34 @@ import re
 from typing import Mapping, Sequence
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     confusion_matrix,
     matthews_corrcoef,
+    precision_recall_curve,
     precision_recall_fscore_support,
 )
+
+CLASS_LINE_COLORS = {
+    0: "#666666",   # Snow: darkened from white for visibility
+    1: "#FDBF6F",   # Dry sediment
+    2: "#FF7F0E",   # Wet sediment
+    3: "#1F78B4",   # Water
+    4: "#A6A6A6",   # Bedrock
+    5: "#D9D9D9",   # Boulder
+    6: "#000000",   # Driftwood
+    7: "#22A447",   # Algae
+    8: "#9ECAE1",   # Ice
+    9: "#C44EAA",   # Anthropogenic
+    11: "#FDBF6F",  # Fine grain size
+    12: "#FF7F0E",  # Medium grain size
+    13: "#E31A1C",  # Coarse grain size
+}
 
 
 def load_method_predictions(
@@ -30,11 +49,31 @@ def load_method_predictions(
         result_type = str(spec["type"])
         path = Path(spec["path"])
         prediction_column = str(spec["prediction_column"])
+        if prediction_column == "predicted_class_code":
+            probability_prefix = ""
+        elif prediction_column.endswith("_predicted_class_code"):
+            probability_prefix = prediction_column.removesuffix(
+                "predicted_class_code"
+            )
+        else:
+            raise ValueError(
+                f"Cannot infer probability columns from {prediction_column}"
+            )
+        probability_columns = [
+            f"{probability_prefix}probability_class_{class_code}"
+            for class_code in class_codes
+        ]
         if not path.exists():
             raise FileNotFoundError(path)
 
         frame = pd.read_csv(path, dtype={"date": "string", "cell_id": "string"})
-        required = {"date", "cell_id", "true_class_code", prediction_column}
+        required = {
+            "date",
+            "cell_id",
+            "true_class_code",
+            prediction_column,
+            *probability_columns,
+        }
         missing = required - set(frame.columns)
         if missing:
             raise ValueError(f"Missing columns in {path}: {sorted(missing)}")
@@ -46,6 +85,14 @@ def load_method_predictions(
         frame = frame.sort_values(["date", "cell_id"]).reset_index(drop=True)
         y_true = pd.to_numeric(frame["true_class_code"], errors="raise").astype(int)
         y_pred = pd.to_numeric(frame[prediction_column], errors="raise").astype(int)
+        y_probability = frame[probability_columns].apply(
+            pd.to_numeric,
+            errors="raise",
+        ).to_numpy(dtype=float)
+        if not np.isfinite(y_probability).all():
+            raise ValueError(f"Non-finite class probabilities in {path}")
+        if ((y_probability < 0) | (y_probability > 1)).any():
+            raise ValueError(f"Class probabilities outside [0, 1] in {path}")
         observed = set(y_true) | set(y_pred)
         if not observed.issubset(expected_classes):
             raise ValueError(f"Unexpected classes in {path}: {sorted(observed - expected_classes)}")
@@ -61,11 +108,48 @@ def load_method_predictions(
             "path": path,
             "y_true": y_true.to_numpy(),
             "y_pred": y_pred.to_numpy(),
+            "y_probability": y_probability,
         }
 
     if not loaded:
         raise ValueError("No prediction methods were configured")
     return loaded
+
+
+def load_best_grid_search_configurations(
+    method_specs: Sequence[Mapping[str, object]],
+) -> pd.DataFrame:
+    rows = []
+    for spec in method_specs:
+        if str(spec["type"]) != "Model":
+            continue
+        result_path = Path(spec["path"]).parent / "best_grid_search_result.csv"
+        if not result_path.exists():
+            raise FileNotFoundError(result_path)
+        result = pd.read_csv(result_path)
+        if len(result) != 1:
+            raise ValueError(
+                f"Expected one best grid-search result in {result_path}, "
+                f"found {len(result)}"
+            )
+        selected = result.iloc[0]
+        rows.append(
+            {
+                "Model": str(spec["name"]),
+                "Learning rate": float(selected["learning_rate"]),
+                "Weight decay": float(selected["weight_decay"]),
+                "Dropout": (
+                    float(selected["dropout"])
+                    if "dropout" in result.columns
+                    else np.nan
+                ),
+                "Context radius": int(selected["context_radius"]),
+                "Validation macro F1": float(selected["validation_macro_f1"]),
+            }
+        )
+    if not rows:
+        raise ValueError("No standalone model grid-search results are available")
+    return pd.DataFrame(rows)
 
 
 def calculate_method_metrics(
@@ -207,6 +291,7 @@ def plot_exact_confusion_matrices(
     figure.legend(
         handles=legend_handles,
         loc="lower center",
+        bbox_to_anchor=(0.5, 0.005),
         ncol=2,
         frameon=False,
         fontsize=10 * font_scale,
@@ -219,12 +304,186 @@ def plot_exact_confusion_matrices(
     )
     figure.text(
         0.5,
-        0.025,
+        0.042,
         "Color intensity is log-scaled; annotations show exact cell counts.",
         ha="center",
         fontsize=10 * font_scale,
     )
-    figure.tight_layout(rect=(0, 0.06, 1, 0.97))
+    figure.tight_layout(rect=(0, 0.085, 1, 0.97))
+    return figure
+
+
+def plot_multiclass_precision_recall_curves(
+    predictions: Mapping[str, Mapping[str, object]],
+    class_codes: Sequence[int],
+    class_names: Mapping[int, str],
+    figure_title: str,
+    columns: int = 3,
+    panel_size: float = 4.2,
+    font_scale: float = 1.0,
+) -> plt.Figure:
+    method_items = list(predictions.items())
+    rows = ceil(len(method_items) / columns)
+    labels = list(map(int, class_codes))
+    class_count = len(labels)
+    legend_item_count = class_count + 1
+    legend_columns = min(4, legend_item_count)
+    legend_rows = ceil(legend_item_count / legend_columns)
+    horizontal_gap_ratio = 0.22
+    grid_width_ratios = []
+    for column_index in range(columns):
+        grid_width_ratios.extend([1.0, 1.0])
+        if column_index < columns - 1:
+            grid_width_ratios.append(horizontal_gap_ratio)
+    figure = plt.figure(
+        figsize=(
+            (
+                columns
+                + (columns - 1) * horizontal_gap_ratio / 2
+            )
+            * panel_size,
+            rows * (panel_size + 1.15) + legend_rows * 0.30,
+        )
+    )
+    grid = figure.add_gridspec(
+        rows,
+        len(grid_width_ratios),
+        width_ratios=grid_width_ratios,
+        hspace=0.48,
+        wspace=0.0,
+    )
+    fallback_color_map = plt.get_cmap("tab10")
+    class_colors = [
+        CLASS_LINE_COLORS.get(class_code, fallback_color_map(index % 10))
+        for index, class_code in enumerate(labels)
+    ]
+
+    for index, (method, result) in enumerate(method_items):
+        row = index // columns
+        index_in_row = index % columns
+        methods_in_row = min(columns, len(method_items) - row * columns)
+        if methods_in_row == 1:
+            panel_slots = np.asarray([columns // 2])
+        else:
+            panel_slots = np.linspace(
+                0,
+                columns - 1,
+                methods_in_row,
+                dtype=int,
+            )
+        grid_column = int(panel_slots[index_in_row]) * 3
+        axis = figure.add_subplot(grid[row, grid_column : grid_column + 2])
+
+        y_true = np.asarray(result["y_true"], dtype=int)
+        y_probability = np.asarray(result["y_probability"], dtype=float)
+        y_binary = np.column_stack([y_true == class_code for class_code in labels])
+        recall_grid = np.linspace(0.0, 1.0, 501)
+        interpolated_precisions = []
+        class_average_precisions = []
+        for class_index, color in enumerate(class_colors):
+            binary_truth = y_binary[:, class_index].astype(int)
+            if np.unique(binary_truth).size < 2:
+                continue
+            precision, recall, _ = precision_recall_curve(
+                binary_truth,
+                y_probability[:, class_index],
+            )
+            class_average_precisions.append(
+                average_precision_score(
+                    binary_truth,
+                    y_probability[:, class_index],
+                )
+            )
+            interpolated_precisions.append(
+                np.interp(
+                    recall_grid,
+                    recall[::-1],
+                    precision[::-1],
+                )
+            )
+            axis.plot(
+                recall,
+                precision,
+                color=color,
+                linewidth=1.35 * font_scale,
+                alpha=0.9,
+            )
+
+        if not interpolated_precisions:
+            raise ValueError(
+                f"Precision-recall curves cannot be calculated for {method}"
+            )
+        mean_precision = np.mean(interpolated_precisions, axis=0)
+        macro_average_precision = float(np.mean(class_average_precisions))
+        axis.plot(
+            recall_grid,
+            mean_precision,
+            color="black",
+            linewidth=2.2 * font_scale,
+            linestyle="--",
+        )
+
+        display_title = {
+            "Globally weighted probability voting": (
+                "Globally weighted\nprobability voting"
+            ),
+            "Model-and-class weighted probability voting": (
+                "Model-and-class weighted\nprobability voting"
+            ),
+        }.get(method, method)
+        axis.set_title(
+            f"{display_title}\nMacro AP = {macro_average_precision:.3f}",
+            fontsize=11 * font_scale,
+            fontweight="bold",
+        )
+        axis.set_xlabel("Recall", fontsize=10 * font_scale)
+        axis.set_ylabel("Precision", fontsize=10 * font_scale)
+        axis.set_xlim(-0.02, 1.02)
+        axis.set_ylim(-0.02, 1.02)
+        axis.set_aspect("equal", adjustable="box")
+        axis.grid(color="0.88", linewidth=0.7, alpha=0.8)
+        axis.tick_params(labelsize=9 * font_scale)
+
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=color,
+            linewidth=2,
+            label=f"{class_code}: {class_names.get(class_code, class_code)}",
+        )
+        for class_code, color in zip(labels, class_colors)
+    ]
+    legend_handles.append(
+        Line2D(
+            [0],
+            [0],
+            color="black",
+            linewidth=2.2,
+            linestyle="--",
+            label="Macro-average PR",
+        )
+    )
+    figure.legend(
+        handles=legend_handles,
+        loc="lower center",
+        ncol=legend_columns,
+        frameon=False,
+        fontsize=10 * font_scale,
+    )
+    figure.suptitle(
+        figure_title,
+        fontsize=14 * font_scale,
+        fontweight="bold",
+        y=0.995,
+    )
+    bottom_margin = 0.07 + legend_rows * 0.018
+    figure.subplots_adjust(
+        left=0.06,
+        right=0.985,
+        bottom=bottom_margin,
+        top=0.93,
+    )
     return figure
 
 
@@ -457,4 +716,53 @@ def print_latex_best_backbones_by_class(
             f"{' & '.join(markers)} \\\\"
         )
 
+    print(r"\end{longtable}")
+
+
+def print_latex_best_grid_search_configurations(
+    configurations: pd.DataFrame,
+    dataset_label: str,
+    label_prefix: str,
+) -> None:
+    header = (
+        r"\textbf{Model} & "
+        r"\shortstack{\textbf{Learning}\\\textbf{rate}} & "
+        r"\shortstack{\textbf{Weight}\\\textbf{decay}} & "
+        r"\textbf{Dropout} & "
+        r"\shortstack{\textbf{Context}\\\textbf{radius}} & "
+        r"\shortstack{\textbf{Validation}\\\textbf{F1-score}} \\"
+    )
+    print("% Best-performing grid-search configurations")
+    print(r"\begin{longtable}{@{}lrrrrr@{}}")
+    print(
+        rf"\caption{{Best-performing grid-search configurations for the "
+        rf"{dataset_label}, selected according to macro-averaged F1-score "
+        rf"on the validation set.}} "
+        rf"\label{{tab:{label_prefix}-best-grid-search-configurations}} \\"
+    )
+    print(r"\toprule")
+    print(header)
+    print(r"\midrule")
+    print(r"\endfirsthead")
+    print(
+        rf"\caption[]{{Best-performing grid-search configurations for the "
+        rf"{dataset_label}.}} \\"
+    )
+    print(r"\toprule")
+    print(header)
+    print(r"\midrule")
+    print(r"\endhead")
+    print(r"\midrule")
+    print(r"\multicolumn{6}{r}{Continued on next page} \\")
+    print(r"\midrule")
+    print(r"\endfoot")
+    print(r"\bottomrule")
+    print(r"\endlastfoot")
+
+    for row in configurations.itertuples(index=False):
+        dropout = "--" if pd.isna(row[3]) else f"{row[3]:g}"
+        print(
+            f"{row[0]} & {row[1]:.0e} & {row[2]:.0e} & {dropout} & "
+            f"{int(row[4])} & {row[5]:.3f} \\\\"
+        )
     print(r"\end{longtable}")
