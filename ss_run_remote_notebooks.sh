@@ -23,12 +23,12 @@ timestamp() {
 
 notebook_for_job() {
     case "$1" in
-        small_cnn) echo "ss_train_small_cnn_classifier.ipynb" ;;
-        convnext) echo "ss_train_convnext_classifier.ipynb" ;;
-        vit) echo "ss_train_vit_tiny_classifier.ipynb" ;;
-        swin) echo "ss_train_swin_tiny_classifier.ipynb" ;;
-        efficientnet) echo "ss_train_efficientnetv2_classifier.ipynb" ;;
-        ensemble) echo "ss_evaluate_ensemble.ipynb" ;;
+        small_cnn) echo "gs_train_small_cnn_classifier.ipynb" ;;
+        convnext) echo "gs_train_convnext_classifier.ipynb" ;;
+        vit) echo "gs_train_vit_tiny_classifier.ipynb" ;;
+        swin) echo "gs_train_swin_tiny_classifier.ipynb" ;;
+        efficientnet) echo "gs_train_efficientnetv2_classifier.ipynb" ;;
+        ensemble) echo "gs_evaluate_ensemble.ipynb" ;;
         *) return 1 ;;
     esac
 }
@@ -104,7 +104,7 @@ if [[ "${1:-}" != "--worker" ]]; then
     fi
     resolve_jobs "$@"
     mkdir -p "${EXECUTED_DIR}"
-    pipeline_log="${PROJECT_DIR}/ss_notebook_pipeline_$(date +%Y%m%d_%H%M%S).log"
+    pipeline_log="${PROJECT_DIR}/gs_notebook_pipeline_$(date +%Y%m%d_%H%M%S).log"
     nohup "${BASH}" "${SCRIPT_PATH}" --worker "${RESOLVED_JOBS[@]}" \
         > "${pipeline_log}" 2>&1 < /dev/null &
     pipeline_pid=$!

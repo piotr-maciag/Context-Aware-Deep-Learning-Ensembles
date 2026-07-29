@@ -113,19 +113,20 @@ jupyter lab
 
 ## Workflow
 
-Run the notebooks in this order for the first-stage dataset:
+Run the notebooks in this order for the beach-surface dataset:
 
-1. `create_dataset_splits.ipynb`
-2. `train_small_cnn_classifier.ipynb`
-3. `train_efficientnetv2_classifier.ipynb`
-4. `train_vit_tiny_classifier.ipynb`
-5. `train_swin_tiny_classifier.ipynb`
-6. `train_convnext_classifier.ipynb`
-7. `evaluate_ensemble.ipynb`
-8. `example_metrics_reporting.ipynb`
+1. `bs_create_dataset_splits.ipynb`
+2. `bs_train_small_cnn_classifier.ipynb`
+3. `bs_train_efficientnetv2_classifier.ipynb`
+4. `bs_train_vit_tiny_classifier.ipynb`
+5. `bs_train_swin_tiny_classifier.ipynb`
+6. `bs_train_convnext_classifier.ipynb`
+7. `bs_evaluate_ensemble.ipynb`
+8. `bs_example_metrics_reporting.ipynb`
 
-The corresponding second-stage notebooks use the `ss_` prefix, beginning with
-`ss_create_dataset_splits.ipynb`.
+Beach-surface notebooks use the `bs_` prefix. The corresponding grain-size
+notebooks use the `gs_` prefix, beginning with
+`gs_create_dataset_splits.ipynb`.
 
 Each training notebook performs grid search using the validation split, saves
 the best checkpoint and inference metadata, and evaluates the selected model on
@@ -134,14 +135,14 @@ are reserved for final comparison.
 
 Feature-distribution notebooks report channel statistics by class:
 
-- `plot_feature_distributions_by_class.ipynb`
-- `ss_plot_feature_distributions_by_class.ipynb`
+- `bs_plot_feature_distributions_by_class.ipynb`
+- `gs_plot_feature_distributions_by_class.ipynb`
 
 Full-dataset classification is performed by:
 
-- `classify_all_cells_convnext.ipynb`
-- `classify_all_cells_weighted_ensemble.ipynb`
-- `ss_classify_beach_surfaces_weighted_ensemble.ipynb`
+- `bs_classify_all_cells_convnext.ipynb`
+- `bs_classify_all_cells_weighted_ensemble.ipynb`
+- `gs_classify_beach_surfaces_weighted_ensemble.ipynb`
 
 The inference notebooks read matrices directly from `Data/Raw/beach_all`; they
 do not copy the source dataset.

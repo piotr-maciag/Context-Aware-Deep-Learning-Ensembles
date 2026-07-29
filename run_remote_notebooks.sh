@@ -23,12 +23,12 @@ timestamp() {
 
 notebook_for_job() {
     case "$1" in
-        small_cnn) echo "train_small_cnn_classifier.ipynb" ;;
-        convnext) echo "train_convnext_classifier.ipynb" ;;
-        vit) echo "train_vit_tiny_classifier.ipynb" ;;
-        swin) echo "train_swin_tiny_classifier.ipynb" ;;
-        efficientnet) echo "train_efficientnetv2_classifier.ipynb" ;;
-        ensemble) echo "evaluate_ensemble.ipynb" ;;
+        small_cnn) echo "bs_train_small_cnn_classifier.ipynb" ;;
+        convnext) echo "bs_train_convnext_classifier.ipynb" ;;
+        vit) echo "bs_train_vit_tiny_classifier.ipynb" ;;
+        swin) echo "bs_train_swin_tiny_classifier.ipynb" ;;
+        efficientnet) echo "bs_train_efficientnetv2_classifier.ipynb" ;;
+        ensemble) echo "bs_evaluate_ensemble.ipynb" ;;
         *) return 1 ;;
     esac
 }
