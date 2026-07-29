@@ -1,4 +1,4 @@
-# Beach Classification Software
+# Context-Aware Deep Learning Ensembles for Beach-Surface and Grain-Size Classification in Isbjørnhamna, Svalbard
 
 This repository contains the data preparation, training, ensemble evaluation,
 inference, and reporting workflow for context-aware classification of beach
