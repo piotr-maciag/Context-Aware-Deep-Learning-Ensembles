@@ -36,10 +36,10 @@ notebook_for_job() {
 usage() {
     cat <<'EOF'
 Usage:
-  ./run_remote_notebooks.sh all
-  ./run_remote_notebooks.sh training
-  ./run_remote_notebooks.sh convnext vit swin efficientnet
-  ./run_remote_notebooks.sh ensemble
+  ./bs_run_remote_notebooks.sh all
+  ./bs_run_remote_notebooks.sh training
+  ./bs_run_remote_notebooks.sh convnext vit swin efficientnet
+  ./bs_run_remote_notebooks.sh ensemble
 
 Names: small_cnn, convnext, vit, swin, efficientnet, ensemble
 
@@ -103,7 +103,7 @@ if [[ "${1:-}" != "--worker" ]]; then
     fi
     resolve_jobs "$@"
     mkdir -p "${EXECUTED_DIR}"
-    pipeline_log="${PROJECT_DIR}/notebook_pipeline_$(date +%Y%m%d_%H%M%S).log"
+    pipeline_log="${PROJECT_DIR}/bs_notebook_pipeline_$(date +%Y%m%d_%H%M%S).log"
     nohup "${BASH}" "${SCRIPT_PATH}" --worker "${RESOLVED_JOBS[@]}" \
         > "${pipeline_log}" 2>&1 < /dev/null &
     pipeline_pid=$!

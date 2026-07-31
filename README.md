@@ -40,8 +40,8 @@ probability voting. The Small CNN is retained as a standalone baseline.
 |-- Source/
 |-- requirements.txt
 |-- requirements-remote-gpu-cu128.txt
-|-- run_remote_notebooks.sh
-`-- ss_run_remote_notebooks.sh
+|-- bs_run_remote_notebooks.sh
+`-- gs_run_remote_notebooks.sh
 ```
 
 `Source/` provides the shared dataset, model, training, grid-search, ensemble,
@@ -156,21 +156,21 @@ The launch scripts execute notebooks sequentially in a detached `nohup`
 pipeline. From the repository root, run:
 
 ```bash
-./run_remote_notebooks.sh all
-./ss_run_remote_notebooks.sh all
+./bs_run_remote_notebooks.sh all
+./gs_run_remote_notebooks.sh all
 ```
 
 Individual jobs can also be selected:
 
 ```bash
-./run_remote_notebooks.sh convnext vit ensemble
-./ss_run_remote_notebooks.sh training
+./bs_run_remote_notebooks.sh convnext vit ensemble
+./gs_run_remote_notebooks.sh training
 ```
 
 Set `BEACH_PYTHON` when a specific interpreter is required:
 
 ```bash
-BEACH_PYTHON=/path/to/python ./run_remote_notebooks.sh all
+BEACH_PYTHON=/path/to/python ./bs_run_remote_notebooks.sh all
 ```
 
 Each job writes a debug log to the repository root. Executed notebooks are

@@ -36,14 +36,14 @@ notebook_for_job() {
 usage() {
     cat <<'EOF'
 Usage:
-  ./ss_run_remote_notebooks.sh all
-  ./ss_run_remote_notebooks.sh training
-  ./ss_run_remote_notebooks.sh convnext vit swin efficientnet
-  ./ss_run_remote_notebooks.sh ensemble
+  ./gs_run_remote_notebooks.sh all
+  ./gs_run_remote_notebooks.sh training
+  ./gs_run_remote_notebooks.sh convnext vit swin efficientnet
+  ./gs_run_remote_notebooks.sh ensemble
 
 Names: small_cnn, convnext, vit, swin, efficientnet, ensemble
 
-The command starts a detached sequential second-stage pipeline. Each notebook
+The command starts a detached sequential grain-size pipeline. Each notebook
 receives its own debug log and executed notebook. Use BEACH_PYTHON to select
 another interpreter.
 EOF
@@ -108,7 +108,7 @@ if [[ "${1:-}" != "--worker" ]]; then
     nohup "${BASH}" "${SCRIPT_PATH}" --worker "${RESOLVED_JOBS[@]}" \
         > "${pipeline_log}" 2>&1 < /dev/null &
     pipeline_pid=$!
-    echo "Started second-stage notebook pipeline with PID ${pipeline_pid}."
+    echo "Started grain-size notebook pipeline with PID ${pipeline_pid}."
     echo "Pipeline log: ${pipeline_log}"
     echo "Jobs: ${RESOLVED_JOBS[*]}"
     exit 0
@@ -119,8 +119,8 @@ resolve_jobs "$@"
 mkdir -p "${EXECUTED_DIR}"
 cd "${PROJECT_DIR}"
 
-echo "[$(timestamp)] Second-stage pipeline started: ${RESOLVED_JOBS[*]}"
+echo "[$(timestamp)] Grain-size pipeline started: ${RESOLVED_JOBS[*]}"
 for job in "${RESOLVED_JOBS[@]}"; do
     run_notebook "${job}"
 done
-echo "[$(timestamp)] Second-stage pipeline completed successfully."
+echo "[$(timestamp)] Grain-size pipeline completed successfully."
