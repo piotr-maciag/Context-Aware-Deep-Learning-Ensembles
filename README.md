@@ -198,3 +198,15 @@ repository, install Git LFS and materialize the checkpoints with:
 git lfs install
 git lfs pull
 ```
+
+## License
+
+The source code and notebooks in this repository are licensed under the GNU
+General Public License version 3.0 (`GPL-3.0-only`). You may use, modify, and
+redistribute them, including for commercial purposes, provided that distributed
+copies and derivative works remain under GPLv3 and their corresponding source
+code is made available. See [LICENSE](LICENSE) for the complete terms.
+
+Datasets, trained model checkpoints, generated results, and third-party
+materials may be subject to separate licenses or usage terms specified by their
+respective authors or providers.
