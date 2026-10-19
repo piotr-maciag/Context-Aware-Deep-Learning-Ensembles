@@ -291,12 +291,19 @@ The study was funded by the National Science Centre of Poland through grants 202
 
 ## License
 
-The source code and notebooks in this repository are licensed under the GNU
+The source code, shell scripts, and notebook code and explanatory text are
+licensed under the GNU
 General Public License version 3.0 (`GPL-3.0-only`). You may use, modify, and
 redistribute them, including for commercial purposes, provided that distributed
 copies and derivative works remain under GPLv3 and their corresponding source
 code is made available. See [LICENSE](LICENSE) for the complete terms.
 
-Datasets, trained model checkpoints, generated results, and third-party
-materials may be subject to separate licenses or usage terms specified by their
-respective authors or providers.
+Research data are published in a separate repository and are governed by the
+licence stated in that repository. The software licence here does not relicense
+those data, third-party datasets, pretrained weights, or other third-party
+materials.
+
+The [NCN Open Science policy](https://www.ncn.gov.pl/finansowanie-nauki/otwarta-nauka)
+specifies licensing provisions for publications and research data, but does not
+designate a preferred software licence. GPLv3 is this project's software
+licence, not an NCN-mandated choice.
