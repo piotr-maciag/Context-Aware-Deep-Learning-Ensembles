@@ -68,8 +68,10 @@ For a cell identifier such as `1000956`, a date directory contains:
 
 Each file stores a 20 x 20 matrix. Neighboring cells are loaded from the same
 survey date according to the selected context radius. A radius of 0 uses only
-the central cell, radius 1 produces a 3 x 3 cell context, and radius 2 produces
-a 5 x 5 context.
+the central cell, radius 1 produces a 3 x 3 cell context, radius 2 produces
+a 5 x 5 context, and radius 3 produces a 7 x 7 context. All training grids test
+`[0, 1, 2, 3]`. The native mosaic sides are 20, 60, 100, and 140 pixels;
+the four pretrained models resize them to 224 x 224. Small CNN uses native sizes.
 
 NaN values and the `-999` sentinel are treated as missing. Channel means and
 standard deviations are calculated from the training split. Missing values,
@@ -77,12 +79,34 @@ including unavailable neighboring cells, are filled with the corresponding
 training-channel means. Validation and test data do not contribute to these
 statistics.
 
-The split notebooks write beach-surface files (`bs_dataset_splits.csv`,
-`bs_train_split.csv`, `bs_validation_split.csv`, and `bs_test_split.csv`) and
-grain-size files (`gs_dataset_splits.csv`, `gs_train_split.csv`,
-`gs_validation_split.csv`, and `gs_test_split.csv`) to `Data/Preprocessed/`.
-They contain dates, cell identifiers, labels, and split assignments; they do
-not copy the matrix files.
+The beach-surface split notebook writes `bs_dataset_splits.csv`,
+`bs_train_split.csv`, `bs_validation_split.csv`, `bs_test_split.csv`, and
+`bs_split_provenance.json` to `Data/Preprocessed/`. All labelled cells from
+surveys **20180812, 20180915, and 20220910** belong exclusively to the test set.
+The other surveys are split into training/validation with relative weights
+70:15 (validation receives 15/85 of the remainder), stratified by class.
+No classes are removed. With the current annotations this gives 5,459 training,
+1,170 validation, and 1,493 test cells.
+
+Grain-size evaluation uses **five outer folds and three inner folds**, saved as
+`gs_cv_samples.csv`, `gs_cv_inner_folds.csv`, and `gs_cv_manifest.json`.
+Each of the 140 cells is in exactly one outer evaluation fold (28 cells).
+The other 112 cells undergo inner cross-validation for configuration selection
+by mean inner-validation macro F1. Inner validation loss controls early stopping;
+the median best epoch of the selected configuration determines the fixed refit
+length on all 112 outer-training cells. Outer labels never control selection,
+normalization, early stopping, or ensemble weights. The same folds serve every
+model. This is stratified **cell-level** CV, not survey-held-out validation.
+
+For each ensemble outer fold, weights are calculated from the selected
+backbones' inner out-of-fold probabilities on that fold's training cells.
+Hard voting resolves ties using mean probabilities among tied classes.
+The outer-held-out predictions evaluate all four ensemble rules independently.
+Separate three-fold inner CV on all labelled cells selects deployment models
+and deployment ensemble weights; these are not evaluated on their training data.
+The old `gs_*_split.csv` files are retained only as historical metadata and are
+not consumed by current training, evaluation, or grain-size violin notebooks.
+No split/fold notebook copies matrix files.
 
 ## Installation
 
@@ -131,10 +155,18 @@ Beach-surface notebooks use the `bs_` prefix. The corresponding grain-size
 notebooks use the `gs_` prefix, beginning with
 `gs_create_dataset_splits.ipynb`.
 
-Each training notebook performs grid search using the validation split, saves
-the best checkpoint and inference metadata, and evaluates the selected model on
-the test split. Ensemble selection also uses validation results; test results
-are reserved for final comparison.
+Beach-surface training performs grid search on the training/validation split
+and evaluates once on the three-survey holdout. Grain-size training performs
+nested CV and separately fits a final deployment model. Both save checkpoints
+and inference metadata. Statistics are fitted independently on each fit's
+training cells, using central-cell pixels only, and shared across context radii
+within that fit. Missing neighbors always come from the same survey date and
+use those training-channel means.
+
+Rerun split generation and training after changing the evaluation protocol.
+Saved split fingerprints and CV completion manifests reject stale results.
+Historical notebook outputs and existing trained results are preserved; they
+do not represent the new experiments until the notebooks are executed again.
 
 Feature-distribution notebooks report channel statistics by class:
 
@@ -160,6 +192,12 @@ pipeline. From the repository root, run:
 ./gs_run_remote_notebooks.sh all
 ```
 
+The `all` and `training` modes first execute the corresponding split/fold
+notebook. Individual model jobs reuse the saved metadata. Grain-size nested CV
+requires many more fits than a single split; grid configurations are distributed
+over the dynamically detected CUDA devices. Each notebook can also be executed
+directly with `jupyter nbconvert --execute` and unlimited execution timeout.
+
 Individual jobs can also be selected:
 
 ```bash
@@ -179,11 +217,59 @@ by Git.
 
 ## Results
 
+All results use the same stage prefixes as the notebooks: `bs_` for beach-surface
+classification and `gs_` for grain-size classification. For example:
+
+```text
+Results/
+|-- bs_convnext_tiny/          # Other backbones use the same bs_ prefix
+|-- bs_ensemble/
+|-- bs_all_cells_classification/
+|-- gs_convnext_tiny/          # Other backbones use the same gs_ prefix
+|-- gs_ensemble/
+`-- gs_all_cells_classification/
+```
+
+These folders are created when the corresponding notebooks run. Previous
+generated results were removed from the working tree and remain in Git history;
+historical model checkpoints are stored through Git LFS. Existing notebook
+outputs are retained and should be regenerated for the new evaluation protocol.
+
 Model-specific directories under `Results/` contain the selected configuration,
 grid-search summaries and traces, normalization statistics, validation and test
 metrics, predictions, inference metadata, and the best loadable checkpoint.
 Ensemble directories contain validation-derived weights, predictions,
 classification reports, and confusion matrices.
+
+Grain-size evaluation artifacts are kept in each `Results/gs_<model>/`
+directory under `cross_validation/fold_<n>/`. Each fold saves inner grid scores,
+per-class and epoch traces, selected configuration, inner OOF probabilities,
+outer predictions, checkpoint, normalization, metrics, and timing.
+`cross_validation/oof_predictions.csv` pools all outer predictions, with one
+prediction per cell. `fold_metrics_and_timing.csv`, `cv_summary.csv` (mean and
+sample standard deviation), `fold_per_class_metrics.csv`,
+`cv_per_class_summary.csv`, and pooled reports provide complementary summaries.
+The model directory root contains the separate all-data deployment checkpoint,
+metadata, configuration search, inner OOF predictions, and deployment timings.
+`Results/gs_ensemble/cross_validation/` stores the corresponding results for
+all four ensembles; its root `ensemble_definition.json` contains deployment
+weights compatible with the existing whole-dataset classification notebook.
+
+Timing uses wall-clock seconds with accelerator synchronization. Beach-surface
+models save `timing_summary.csv`; the ensemble also saves
+`test_metrics_and_timing.csv`. Grain-size fold timing separates normalization,
+inner search elapsed time, summed inner fit work, outer refit training, and
+held-out prediction. Training includes forward/backward passes and inner
+validation used by early stopping; prediction includes DataLoader I/O.
+Ensemble prediction time is the sum of component prediction times plus voting;
+ensemble training cost includes the shared backbone training and weight fitting.
+These shared costs must not be added across all four ensemble methods as if
+they required four separate sets of models. CPU voting is timed separately;
+checkpoint loading is included in beach-surface ensemble inference, while
+grain-size timing uses already loaded outer models and cached probabilities.
+Model construction/downloads and writing result files are excluded from fit
+and prediction intervals. Both reporting notebooks display timings and print
+LaTeX alongside quality results. Grain-size plots/tables use outer OOF predictions.
 
 The metrics-reporting notebooks calculate accuracy, macro precision, macro
 recall, macro F1-score, Matthews correlation coefficient, exact confusion
@@ -198,6 +284,10 @@ repository, install Git LFS and materialize the checkpoints with:
 git lfs install
 git lfs pull
 ```
+
+## Funding
+
+The study was funded by the National Science Centre of Poland through grants 2023/51/D/ST6/01609 (SONATA 19) and 2021/40/C/ST10/00146 (SONATINA 5), and by the Warsaw University of Technology Research University--Excellence Initiative through grant CPR-IDUB/288/Z01/POB3/2024.
 
 ## License
 

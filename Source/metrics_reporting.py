@@ -39,15 +39,36 @@ CLASS_LINE_COLORS = {
 def load_method_predictions(
     method_specs: Sequence[Mapping[str, object]],
     class_codes: Sequence[int],
+    expected_cv_manifest: Mapping[str, object] | None = None,
+    expected_split_provenance: Mapping[str, object] | None = None,
+    expected_evaluation_frame: pd.DataFrame | None = None,
 ) -> dict[str, dict[str, object]]:
     expected_classes = set(map(int, class_codes))
     loaded: dict[str, dict[str, object]] = {}
     reference_truth: pd.Series | None = None
+    cv_model_runs = {}
+    cv_ensemble_runs = []
 
     for spec in method_specs:
         name = str(spec["name"])
         result_type = str(spec["type"])
         path = Path(spec["path"])
+        if expected_cv_manifest is not None:
+            import json
+            completed = json.loads((path.parent / "completed.json").read_text())
+            for key in ("protocol", "sample_hash", "inner_hash", "random_seed"):
+                if completed.get(key) != expected_cv_manifest[key]:
+                    raise ValueError(f"{name}: stale CV results ({key}); rerun this method")
+            if result_type == "Model":
+                cv_model_runs[completed["model_type"]] = completed["run_id"]
+            else:
+                cv_ensemble_runs.append(completed["models"])
+        if expected_split_provenance is not None:
+            import json
+            artifact_file = "inference_metadata.json" if result_type == "Model" else "ensemble_definition.json"
+            metadata = json.loads((path.parent / artifact_file).read_text())
+            if metadata.get("split_provenance") != expected_split_provenance:
+                raise ValueError(f"{name}: stale beach-surface results; rerun training/evaluation")
         prediction_column = str(spec["prediction_column"])
         if prediction_column == "predicted_class_code":
             probability_prefix = ""
@@ -67,6 +88,15 @@ def load_method_predictions(
             raise FileNotFoundError(path)
 
         frame = pd.read_csv(path, dtype={"date": "string", "cell_id": "string"})
+        if expected_evaluation_frame is not None:
+            from Source.cross_validation import fingerprint
+            columns = ["date", "cell_id", "class"]
+            if fingerprint(frame, columns) != fingerprint(expected_evaluation_frame, columns):
+                raise ValueError(f"{name}: predictions do not cover the current evaluation cells")
+        if expected_cv_manifest is not None:
+            from Source.cross_validation import fingerprint
+            if fingerprint(frame) != expected_cv_manifest["sample_hash"]:
+                raise ValueError(f"{name}: predictions do not match the saved outer folds")
         required = {
             "date",
             "cell_id",
@@ -113,6 +143,10 @@ def load_method_predictions(
 
     if not loaded:
         raise ValueError("No prediction methods were configured")
+    for ensemble_runs in cv_ensemble_runs:
+        for model_type, experiment in ensemble_runs.items():
+            if model_type in cv_model_runs and cv_model_runs[model_type] != experiment["run_id"]:
+                raise ValueError(f"{model_type} was retrained after ensemble evaluation; rerun the ensembles")
     return loaded
 
 
@@ -123,7 +157,10 @@ def load_best_grid_search_configurations(
     for spec in method_specs:
         if str(spec["type"]) != "Model":
             continue
-        result_path = Path(spec["path"]).parent / "best_grid_search_result.csv"
+        parent = Path(spec["path"]).parent
+        if parent.name == "cross_validation":
+            parent = parent.parent
+        result_path = parent / "best_grid_search_result.csv"
         if not result_path.exists():
             raise FileNotFoundError(result_path)
         result = pd.read_csv(result_path)
@@ -495,11 +532,12 @@ def print_latex_metric_tables(
     dataset_label: str,
     label_prefix: str,
     per_class_method_label: str,
+    evaluation_label: str = "test-set",
 ) -> None:
     print("% Aggregate metrics")
     print(r"\begin{longtable}{lrrrrr}")
     print(
-        rf"\caption{{Aggregated test-set metrics for the {dataset_label}.}} "
+        rf"\caption{{Aggregated {evaluation_label} metrics for the {dataset_label}.}} "
         rf"\label{{tab:{label_prefix}-aggregate-metrics}} \\"
     )
     print(r"\toprule")
@@ -510,7 +548,7 @@ def print_latex_metric_tables(
     print(r"\midrule")
     print(r"\endfirsthead")
     print(
-        rf"\caption[]{{Aggregated test-set metrics for the {dataset_label}.}} \\"
+        rf"\caption[]{{Aggregated {evaluation_label} metrics for the {dataset_label}.}} \\"
     )
     print(r"\toprule")
     print(
@@ -562,7 +600,7 @@ def print_latex_metric_tables(
     print("% Per-class metrics")
     print(r"\begin{longtable}{rlrrr}")
     print(
-        rf"\caption{{Per-class test-set metrics for \textbf{{{per_class_method_label}}} "
+        rf"\caption{{Per-class {evaluation_label} metrics for \textbf{{{per_class_method_label}}} "
         rf"ensemble on the {dataset_label}.}} "
         rf"\label{{tab:{label_prefix}-per-class-metrics}} \\"
     )
@@ -574,7 +612,7 @@ def print_latex_metric_tables(
     print(r"\midrule")
     print(r"\endfirsthead")
     print(
-        rf"\caption[]{{Per-class test-set metrics for "
+        rf"\caption[]{{Per-class {evaluation_label} metrics for "
         rf"\textbf{{{per_class_method_label}}} ensemble on the {dataset_label}.}} \\"
     )
     print(r"\toprule")
@@ -618,7 +656,7 @@ def print_latex_metric_tables(
         print(
             matrix_frame.to_latex(
                 escape=True,
-                caption=f"Exact test-set confusion matrix for {method} on the {dataset_label}.",
+                caption=f"Exact {evaluation_label} confusion matrix for {method} on the {dataset_label}.",
                 label=f"tab:{label_prefix}-{slug}-confusion-matrix",
             )
         )
@@ -723,6 +761,7 @@ def print_latex_best_grid_search_configurations(
     configurations: pd.DataFrame,
     dataset_label: str,
     label_prefix: str,
+    selection_description: str = "on the validation set",
 ) -> None:
     header = (
         r"\textbf{Model} & "
@@ -737,7 +776,7 @@ def print_latex_best_grid_search_configurations(
     print(
         rf"\caption{{Best-performing grid-search configurations for the "
         rf"{dataset_label}, selected according to macro-averaged F1-score "
-        rf"on the validation set.}} "
+        rf"{selection_description}.}} "
         rf"\label{{tab:{label_prefix}-best-grid-search-configurations}} \\"
     )
     print(r"\toprule")

@@ -14,8 +14,8 @@ NOTEBOOK_DIR="${PROJECT_DIR}/Notebooks"
 EXECUTED_DIR="${NOTEBOOK_DIR}/executed_notebooks"
 BEACH_PYTHON="${BEACH_PYTHON:-python}"
 
-TRAINING_JOBS=(small_cnn convnext vit swin efficientnet)
-ALL_JOBS=(small_cnn convnext vit swin efficientnet ensemble)
+TRAINING_JOBS=(splits small_cnn convnext vit swin efficientnet)
+ALL_JOBS=(splits small_cnn convnext vit swin efficientnet ensemble)
 
 timestamp() {
     date '+%Y-%m-%dT%H:%M:%S%z'
@@ -23,6 +23,7 @@ timestamp() {
 
 notebook_for_job() {
     case "$1" in
+        splits) echo "bs_create_dataset_splits.ipynb" ;;
         small_cnn) echo "bs_train_small_cnn_classifier.ipynb" ;;
         convnext) echo "bs_train_convnext_classifier.ipynb" ;;
         vit) echo "bs_train_vit_tiny_classifier.ipynb" ;;
@@ -41,7 +42,7 @@ Usage:
   ./bs_run_remote_notebooks.sh convnext vit swin efficientnet
   ./bs_run_remote_notebooks.sh ensemble
 
-Names: small_cnn, convnext, vit, swin, efficientnet, ensemble
+Names: splits, small_cnn, convnext, vit, swin, efficientnet, ensemble
 
 The command starts a detached sequential pipeline. Each notebook receives its own
 debug log and executed notebook. Use BEACH_PYTHON to select another interpreter.

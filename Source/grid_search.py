@@ -12,6 +12,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from Source.training import classification_metrics, fit_model, predict
+from Source.timing import synchronize
+from time import perf_counter
 
 
 @dataclass
@@ -303,6 +305,8 @@ def _run_single_grid_config(
         weight_decay=float(config["weight_decay"]),
     )
 
+    synchronize(device)
+    training_started = perf_counter()
     history = fit_model(
         model,
         current_train_loader,
@@ -318,7 +322,12 @@ def _run_single_grid_config(
         show_progress=not quiet,
     )
 
-    y_true, y_pred, _ = predict(model, current_validation_loader, device, show_progress=not quiet)
+    synchronize(device)
+    training_seconds = perf_counter() - training_started
+    prediction_started = perf_counter()
+    y_true, y_pred, probabilities = predict(model, current_validation_loader, device, show_progress=not quiet)
+    synchronize(device)
+    prediction_seconds = perf_counter() - prediction_started
     report, _ = classification_metrics(y_true, y_pred, idx_to_class)
     validation_score = float(report.loc["macro avg", "f1-score"])
 
@@ -331,6 +340,9 @@ def _run_single_grid_config(
             "best_validation_loss": float(history["validation_loss"].min()),
             "best_validation_accuracy": float(history["validation_accuracy"].max()),
             "validation_macro_f1": validation_score,
+            "training_seconds": training_seconds,
+            "validation_prediction_seconds": prediction_seconds,
+            "best_epoch": int(history.loc[history["is_best_epoch"], "epoch"].iloc[0]),
         }
     )
     metric_trace_rows = []
@@ -359,4 +371,6 @@ def _run_single_grid_config(
         "summary_row": summary_row,
         "metric_trace_rows": metric_trace_rows,
         "state_dict": state_dict,
+        "y_true": y_true,
+        "y_probability": probabilities,
     }

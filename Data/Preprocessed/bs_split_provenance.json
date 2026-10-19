@@ -1,0 +1,15 @@
+{
+  "policy": "bs_date_holdout_20180812_20180915_20220910_v1",
+  "test_dates": [
+    "20180812",
+    "20180915",
+    "20220910"
+  ],
+  "validation_fraction_of_remainder": 0.17647058823529413,
+  "random_seed": 42,
+  "csv_sha256": {
+    "train": "a7a36cb101620cb5cd5845df0baa23e265afd9205d04a3d81c5433d822d0a030",
+    "validation": "9e03c1970446f8bcc1b95cf93423c09a55afefd84f1ef93e75fd6d0d9e141f11",
+    "test": "afbe2da57f9aa9bf7af2ea7cdd1e93ab593439d8a9d247f643bd5a5cce1ef8b9"
+  }
+}

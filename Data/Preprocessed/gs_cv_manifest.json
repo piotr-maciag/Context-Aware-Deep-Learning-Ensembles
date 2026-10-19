@@ -1,0 +1,8 @@
+{
+  "protocol": "nested_stratified_cell_cv_v1",
+  "random_seed": 42,
+  "sample_hash": "32524a7b61529d295d2b5fd95bbad8582ee896d9369305c750befe27b857196a",
+  "inner_hash": "fcea54df3c476fe69192e3991a6f6f691d947b5449452d37b8fcad1fd15affaa",
+  "outer_folds": 5,
+  "inner_folds": 3
+}

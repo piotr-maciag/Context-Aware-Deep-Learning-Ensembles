@@ -182,6 +182,15 @@ def load_global_weighted_ensemble(
     with definition_path.open("r", encoding="utf-8") as file:
         definition = json.load(file)
 
+    if definition.get("protocol") == "nested_stratified_cell_cv_v1":
+        from hashlib import sha256
+        expected_hashes = definition["deployment_model_metadata_hashes"]
+        for artifact in artifacts:
+            metadata_hash = sha256(json.dumps(artifact.metadata, sort_keys=True).encode()).hexdigest()
+            if (artifact.metadata.get("purpose") != "deployment"
+                    or metadata_hash != expected_hashes.get(artifact.name)):
+                raise ValueError(f"{artifact.name}: deployment model changed; rerun grain-size ensemble evaluation")
+
     raw_weights = definition.get("global_model_weights")
     if not isinstance(raw_weights, dict) or not raw_weights:
         raise ValueError(
