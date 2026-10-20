@@ -1,4 +1,4 @@
-"""Nested, stratified cell-level evaluation and separate deployment fitting."""
+"""Nested spatial-group evaluation with context buffers and deployment fitting."""
 
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
@@ -11,21 +11,22 @@ from uuid import uuid4
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, matthews_corrcoef, precision_recall_fscore_support
-from sklearn.model_selection import StratifiedKFold
+from sklearn.cluster import DBSCAN
+from sklearn.model_selection import StratifiedGroupKFold
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
 from Source.beach_dataset import (
     BeachCellDataset, FEATURE_SUFFIXES, class_weights, compute_channel_stats,
-    make_class_mapping,
+    make_class_mapping, cell_id_to_grid_coordinates,
 )
 from Source.grid_search import _run_single_grid_config
 from Source.timing import elapsed_seconds
 from Source.training import classification_metrics, predict, train_one_epoch
 
 
-PROTOCOL = "nested_stratified_cell_cv_v1"
+PROTOCOL = "nested_spatial_group_cv_v2"
 ENSEMBLE_METHODS = (
     "hard_voting", "probability_voting", "weighted_probability_per_model",
     "weighted_probability_per_model_class",
@@ -33,13 +34,84 @@ ENSEMBLE_METHODS = (
 
 
 def fingerprint(frame, columns=None):
-    columns = columns or [c for c in ("date", "cell_id", "class", "outer_fold", "inner_fold") if c in frame]
+    columns = columns or [c for c in ("date", "cell_id", "class", "spatial_group", "max_context_radius", "outer_fold", "inner_fold") if c in frame]
     records = frame[columns].astype(str).sort_values(columns).to_dict("records")
     return sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
 
-def create_cv_plan(frame, outer_folds=5, inner_folds=3, random_seed=42):
-    samples = frame.drop(columns=["split", "outer_fold", "inner_fold"], errors="ignore").copy()
+def _validate_radius(radius):
+    if int(radius) != radius or radius < 0:
+        raise ValueError("Context radius must be a non-negative integer")
+    return int(radius)
+
+
+def spatial_groups(frame, max_context_radius):
+    """Connect same-survey centres whose maximum-radius mosaics intersect."""
+    radius = _validate_radius(max_context_radius)
+    result = pd.Series(index=frame.index, dtype="string")
+    for date, part in frame.groupby("date", sort=True):
+        coordinates = np.array([cell_id_to_grid_coordinates(cell) for cell in part.cell_id])
+        # DBSCAN with min_samples=1 yields connected components, including singletons.
+        labels = (DBSCAN(eps=2 * radius, min_samples=1, metric="chebyshev").fit_predict(coordinates)
+                  if radius else np.arange(len(part)))
+        result.loc[part.index] = [f"{date}:{label}" for label in labels]
+    return result
+
+
+def buffered_training_partition(candidates, heldout, max_context_radius):
+    """Remove training centres at Chebyshev distance <= 2r from held-out centres."""
+    radius = _validate_radius(max_context_radius)
+    excluded = pd.Series(False, index=candidates.index)
+    for date, part in candidates.groupby("date", sort=False):
+        evaluation = heldout.loc[heldout.date == date]
+        if evaluation.empty:
+            continue
+        a = np.array([cell_id_to_grid_coordinates(cell) for cell in part.cell_id])
+        b = np.array([cell_id_to_grid_coordinates(cell) for cell in evaluation.cell_id])
+        distances = np.abs(a[:, None, :] - b[None, :, :]).max(axis=2)
+        excluded.loc[part.index] = (distances <= 2 * radius).any(axis=1)
+    return candidates.loc[~excluded].copy(), candidates.loc[excluded].copy()
+
+
+def _check_partition(training, evaluation, expected_classes, radius):
+    if set(training["class"]) != expected_classes or set(evaluation["class"]) != expected_classes:
+        raise ValueError("Every training and evaluation partition must contain all classes")
+    if set(training.spatial_group) & set(evaluation.spatial_group):
+        raise ValueError("Spatial groups cross a training/evaluation boundary")
+    _, overlapping = buffered_training_partition(training, evaluation, radius)
+    if not overlapping.empty:
+        raise ValueError("Training and evaluation contexts overlap within a survey")
+
+
+def _grouped_partitions(frame, n_splits, seed, radius):
+    classes = set(frame["class"])
+    if n_splits < 2 or frame.groupby("class").spatial_group.nunique().min() < n_splits:
+        raise ValueError("Insufficient independent spatial groups per class for requested folds")
+    for attempt in range(100):
+        splitter = StratifiedGroupKFold(n_splits, shuffle=True, random_state=seed + attempt)
+        partitions = list(splitter.split(frame, frame["class"], frame.spatial_group))
+        try:
+            for training, evaluation in partitions:
+                fit, _ = buffered_training_partition(frame.iloc[training], frame.iloc[evaluation], radius)
+                _check_partition(fit, frame.iloc[evaluation], classes, radius)
+        except ValueError:
+            continue
+        return partitions
+    raise ValueError("Cannot construct class-complete spatial folds; reduce fold count or add annotations")
+
+
+def outer_training_frame(samples, outer, max_context_radius):
+    if outer == 0:
+        return samples.copy()
+    heldout = samples.loc[samples.outer_fold == outer]
+    training, _ = buffered_training_partition(samples.loc[samples.outer_fold != outer], heldout, max_context_radius)
+    _check_partition(training, heldout, set(samples["class"]), max_context_radius)
+    return training
+
+
+def create_cv_plan(frame, outer_folds=5, inner_folds=3, random_seed=42, max_context_radius=3):
+    radius = _validate_radius(max_context_radius)
+    samples = frame.drop(columns=["split", "outer_fold", "inner_fold", "spatial_group", "max_context_radius"], errors="ignore").copy()
     for column in ("date", "cell_id", "class"):
         samples[column] = samples[column].astype(str).str.strip()
         if samples[column].isin(["", "nan", "<NA>"]).any():
@@ -47,21 +119,17 @@ def create_cv_plan(frame, outer_folds=5, inner_folds=3, random_seed=42):
     if samples.duplicated(["date", "cell_id"]).any():
         raise ValueError("Duplicate date/cell_id pairs in CV data")
     samples = samples.sort_values(["date", "cell_id"]).reset_index(drop=True)
-    if outer_folds < 2 or inner_folds < 2 or samples["class"].value_counts().min() < outer_folds:
-        raise ValueError("Insufficient examples per class for requested outer folds")
+    samples["spatial_group"] = spatial_groups(samples, radius)
+    samples["max_context_radius"] = radius
     samples["outer_fold"] = 0
-    splitter = StratifiedKFold(outer_folds, shuffle=True, random_state=random_seed)
-    for fold, (_, heldout) in enumerate(splitter.split(samples, samples["class"]), 1):
+    for fold, (_, heldout) in enumerate(_grouped_partitions(samples, outer_folds, random_seed, radius), 1):
         samples.loc[heldout, "outer_fold"] = fold
     inner_rows = []
     # Fold zero describes the independent, all-labelled-data deployment search.
     for outer in range(outer_folds + 1):
-        training = samples if outer == 0 else samples.loc[samples.outer_fold != outer]
-        if training["class"].value_counts().min() < inner_folds:
-            raise ValueError("Insufficient training examples per class for inner folds")
-        inner_splitter = StratifiedKFold(inner_folds, shuffle=True, random_state=random_seed + outer + 1)
-        for inner, (_, validation) in enumerate(inner_splitter.split(training, training["class"]), 1):
-            part = training.iloc[validation][["date", "cell_id", "class"]].copy()
+        training = outer_training_frame(samples, outer, radius)
+        for inner, (_, validation) in enumerate(_grouped_partitions(training, inner_folds, random_seed + outer + 1, radius), 1):
+            part = training.iloc[validation][["date", "cell_id", "class", "spatial_group", "max_context_radius"]].copy()
             part["outer_fold"] = outer
             part["inner_fold"] = inner
             inner_rows.append(part)
@@ -78,6 +146,10 @@ def save_cv_plan(samples, inner, output_dir, random_seed=42):
         "sample_hash": fingerprint(samples), "inner_hash": fingerprint(inner),
         "outer_folds": int(samples.outer_fold.max()),
         "inner_folds": int(inner.inner_fold.max()),
+        "max_context_radius": int(samples.max_context_radius.iloc[0]),
+        "buffer_distance_cells": 2 * int(samples.max_context_radius.iloc[0]),
+        "grouping": "same_survey_connected_context_components",
+        "distance_metric": "chebyshev",
     }
     write_json(output_dir / "gs_cv_manifest.json", manifest)
     return manifest
@@ -91,17 +163,33 @@ def read_cv_plan(directory):
     if manifest["protocol"] != PROTOCOL or fingerprint(samples) != manifest["sample_hash"] or fingerprint(inner) != manifest["inner_hash"]:
         raise ValueError("CV manifest does not match samples/folds; regenerate the CV plan")
     outer_count, inner_count = manifest["outer_folds"], manifest["inner_folds"]
+    radius = _validate_radius(manifest["max_context_radius"])
+    if (manifest.get("buffer_distance_cells") != 2 * radius
+            or manifest.get("grouping") != "same_survey_connected_context_components"
+            or manifest.get("distance_metric") != "chebyshev"
+            or set(samples.max_context_radius) != {radius}
+            or set(inner.max_context_radius) != {radius}
+            or not spatial_groups(samples, radius).astype(str).equals(samples.spatial_group.astype(str))):
+        raise ValueError("CV spatial groups or buffer policy do not match the saved plan")
     if set(samples.outer_fold) != set(range(1, outer_count + 1)) or samples.duplicated(["date", "cell_id"]).any():
         raise ValueError("Invalid outer-fold assignments")
+    if not samples.groupby("spatial_group").outer_fold.nunique().eq(1).all():
+        raise ValueError("A spatial group crosses outer folds")
     if set(inner.outer_fold) != set(range(outer_count + 1)):
         raise ValueError("Missing inner-fold or deployment assignments")
     for outer in range(outer_count + 1):
-        expected = samples if outer == 0 else samples.loc[samples.outer_fold != outer]
+        expected = outer_training_frame(samples, outer, radius)
         current = inner.loc[inner.outer_fold == outer]
+        if not current.groupby("spatial_group").inner_fold.nunique().eq(1).all():
+            raise ValueError(f"A spatial group crosses inner folds for outer fold {outer}")
         if (set(current.inner_fold) != set(range(1, inner_count + 1))
                 or current.duplicated(["date", "cell_id"]).any()
-                or fingerprint(current, ["date", "cell_id", "class"]) != fingerprint(expected, ["date", "cell_id", "class"])):
+                or fingerprint(current, ["date", "cell_id", "class", "spatial_group", "max_context_radius"]) != fingerprint(expected, ["date", "cell_id", "class", "spatial_group", "max_context_radius"])):
             raise ValueError(f"Invalid inner partition for outer fold {outer}")
+        for fold in range(1, inner_count + 1):
+            evaluation = current.loc[current.inner_fold == fold]
+            training, _ = buffered_training_partition(current.loc[current.inner_fold != fold], evaluation, radius)
+            _check_partition(training, evaluation, set(samples["class"]), radius)
     return samples, inner, manifest
 
 
@@ -168,6 +256,9 @@ def run_nested_cv(
     grid = list(parameter_grid)
     if not grid:
         raise ValueError("Parameter grid is empty")
+    maximum_radius = manifest["max_context_radius"]
+    if any(_validate_radius(config["context_radius"]) > maximum_radius for config in grid):
+        raise ValueError("Grid context radius exceeds the saved spatial buffer; regenerate the CV plan")
     experiment = {**manifest, "run_id": uuid4().hex, "model_type": model_type, "parameter_grid": grid,
                   "image_size": image_size, "epochs": epochs, "batch_size": batch_size,
                   "augmentation": augment, "early_stopping_patience": early_stopping_patience,
@@ -190,13 +281,20 @@ def run_nested_cv(
         destination.mkdir(parents=True, exist_ok=True)
         assignments = inner.loc[inner.outer_fold == outer, ["date", "cell_id", "inner_fold"]]
         partition = training.merge(assignments, on=["date", "cell_id"], validate="one_to_one")
-        stats, parts = {}, {}
+        stats, parts, partition_rows = {}, {}, []
         with elapsed_seconds(device) as preparation:
             for fold in sorted(partition.inner_fold.unique()):
-                fit = partition.loc[partition.inner_fold != fold].reset_index(drop=True)
                 validation = partition.loc[partition.inner_fold == fold].reset_index(drop=True)
+                fit, excluded = buffered_training_partition(
+                    partition.loc[partition.inner_fold != fold], validation, maximum_radius
+                )
+                fit = fit.reset_index(drop=True)
+                _check_partition(fit, validation, set(mapping), maximum_radius)
                 stats[fold] = compute_channel_stats(fit, cell_data_root, context_radius=0)
                 parts[fold] = (fit, validation)
+                partition_rows.append({"inner_fold": fold, "training_cells": len(fit),
+                                       "validation_cells": len(validation), "buffer_excluded_cells": len(excluded)})
+        pd.DataFrame(partition_rows).to_csv(destination / "inner_partition_summary.csv", index=False)
         gpu_count = torch.cuda.device_count() if device.type == "cuda" else 0
         devices = [torch.device(f"cuda:{i}") for i in range(gpu_count)] or [device]
         queue = Queue()
@@ -289,6 +387,8 @@ def run_nested_cv(
             "class_name_by_code": class_name_by_code, "best_config": config,
             "channel_mean": mean.tolist(), "channel_std": std.tolist(),
             "protocol": PROTOCOL, "outer_fold": outer, "cv_sample_hash": manifest["sample_hash"],
+            "max_context_radius": maximum_radius,
+            "buffer_distance_cells": manifest["buffer_distance_cells"],
             "run_id": experiment["run_id"],
             "cv_inner_hash": manifest["inner_hash"], "refit_epochs": refit_epochs,
             "training_sample_hash": fingerprint(training, ["date", "cell_id", "class"]),
@@ -303,8 +403,11 @@ def run_nested_cv(
 
     for outer in range(1, manifest["outer_folds"] + 1):
         destination = cv_root / f"fold_{outer}"
-        training = samples.loc[samples.outer_fold != outer].reset_index(drop=True)
+        training = outer_training_frame(samples, outer, maximum_radius).reset_index(drop=True)
         heldout = samples.loc[samples.outer_fold == outer].reset_index(drop=True)
+        destination.mkdir(parents=True, exist_ok=True)
+        training.to_csv(destination / "training_cells.csv", index=False)
+        heldout.to_csv(destination / "evaluation_cells.csv", index=False)
         config, count, _, _, times = search(outer, training, destination)
         model, mean, std, fitting, preparation = refit(training, config, count, destination, outer)
         with elapsed_seconds(device) as prediction_time:
@@ -321,6 +424,8 @@ def run_nested_cv(
                "training_seconds": times["inner_training_seconds"] + fitting,
                "preprocessing_seconds": times["inner_preprocessing_seconds"] + preparation,
                "prediction_seconds": prediction_time["seconds"], "refit_epochs": count,
+               "training_cells": len(training), "evaluation_cells": len(heldout),
+               "buffer_excluded_cells": int((samples.outer_fold != outer).sum()) - len(training),
                "context_radius": config["context_radius"]}
         fold_rows.append(row)
         pd.DataFrame([row]).to_csv(destination / "metrics_and_timing.csv", index=False)
@@ -389,7 +494,7 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
     for name, directory in model_result_dirs.items():
         directory = Path(directory)
         completed = json.loads((directory / "cross_validation" / "completed.json").read_text())
-        for key in ("protocol", "sample_hash", "inner_hash", "random_seed"):
+        for key in ("protocol", "sample_hash", "inner_hash", "random_seed", "max_context_radius"):
             if completed[key] != manifest[key]:
                 raise ValueError(f"{name}: incompatible {key}; rerun training with the current CV plan")
         metadata = json.loads((directory / "inference_metadata.json").read_text())
@@ -402,7 +507,7 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
         metadata_hashes[name] = sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
 
     def weights(outer):
-        training = samples if outer == 0 else samples.loc[samples.outer_fold != outer]
+        training = outer_training_frame(samples, outer, manifest["max_context_radius"])
         probabilities = {}
         for name, directory in model_result_dirs.items():
             parent = Path(directory) if outer == 0 else Path(directory) / "cross_validation" / f"fold_{outer}"
@@ -484,6 +589,8 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
     definition = {
         "protocol": PROTOCOL, "cv_sample_hash": manifest["sample_hash"],
         "cv_inner_hash": manifest["inner_hash"],
+        "max_context_radius": manifest["max_context_radius"],
+        "buffer_distance_cells": manifest["buffer_distance_cells"],
         "selection_metric": "deployment_inner_oof_macro_f1",
         "candidate_methods": list(ENSEMBLE_METHODS),
         "global_model_weights": global_weights, "validation_model_macro_f1": scores,

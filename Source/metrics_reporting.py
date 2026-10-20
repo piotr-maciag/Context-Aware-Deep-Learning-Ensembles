@@ -56,7 +56,7 @@ def load_method_predictions(
         if expected_cv_manifest is not None:
             import json
             completed = json.loads((path.parent / "completed.json").read_text())
-            for key in ("protocol", "sample_hash", "inner_hash", "random_seed"):
+            for key in ("protocol", "sample_hash", "inner_hash", "random_seed", "max_context_radius"):
                 if completed.get(key) != expected_cv_manifest[key]:
                     raise ValueError(f"{name}: stale CV results ({key}); rerun this method")
             if result_type == "Model":

@@ -2,6 +2,7 @@
 Data/*
 !Data/Preprocessed/
 !Data/Preprocessed/**
+Results/Archive/
 
 
 # Local Python environment

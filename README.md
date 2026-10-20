@@ -83,20 +83,41 @@ The beach-surface split notebook writes `bs_dataset_splits.csv`,
 `bs_train_split.csv`, `bs_validation_split.csv`, `bs_test_split.csv`, and
 `bs_split_provenance.json` to `Data/Preprocessed/`. All labelled cells from
 surveys **20180812, 20180915, and 20220910** belong exclusively to the test set.
-The other surveys are split into training/validation with relative weights
-70:15 (validation receives 15/85 of the remainder), stratified by class.
-No classes are removed. With the current annotations this gives 5,459 training,
-1,170 validation, and 1,493 test cells.
+All labelled cells from **20230731 and 20240623** belong exclusively to the
+validation set. Every other survey is training-only. No cells are randomly
+assigned between these sets: training, validation, and testing are disjoint at
+the survey level. All three sets must contain all ten classes. With the current
+annotations this gives 5,386 training, 1,243 validation, and 1,493 test cells.
+Because context is loaded from the central cell's survey, no same-survey input
+observation can appear across these split boundaries. The same geographic
+location can still be observed in different surveys; this is not a geographic
+holdout across all dates.
 
 Grain-size evaluation uses **five outer folds and three inner folds**, saved as
 `gs_cv_samples.csv`, `gs_cv_inner_folds.csv`, and `gs_cv_manifest.json`.
-Each of the 140 cells is in exactly one outer evaluation fold (28 cells).
-The other 112 cells undergo inner cross-validation for configuration selection
-by mean inner-validation macro F1. Inner validation loss controls early stopping;
+Each of the 140 cells is in exactly one outer evaluation fold. Same-survey
+cells with intersecting maximum-radius contexts are assigned to the same
+connected spatial group using DBSCAN (Chebyshev distance, `min_samples=1`).
+For maximum radius 3, centres separated by at most 6 cells are linked;
+transitively linked cells remain in the same group, even if their labels differ.
+StratifiedGroupKFold assigns intact groups to outer and inner folds while
+requiring all three classes in every training and evaluation partition.
+
+There are 129 groups in the current annotations; outer evaluation fold sizes
+are 30, 27, 27, 29, and 27 cells. Inner folds are formed only from the corresponding
+outer-training groups. Both levels apply a training buffer excluding centres
+at distance <= 6 from a same-survey held-out centre and verify zero context
+intersection. The connected-group construction already separates all current
+groups by more than 6 cells, so the buffer checks do not discard any additional
+current annotations. This common maximum-radius separation is used for all
+tested radii `[0, 1, 2, 3]`; a larger grid radius requires regenerating the plan.
+
+Configuration selection uses mean inner-validation macro F1. Inner validation loss controls early stopping;
 the median best epoch of the selected configuration determines the fixed refit
-length on all 112 outer-training cells. Outer labels never control selection,
+length on the corresponding outer-training cells. Outer labels never control selection,
 normalization, early stopping, or ensemble weights. The same folds serve every
-model. This is stratified **cell-level** CV, not survey-held-out validation.
+model. This is **spatial-group CV with same-survey context isolation**, not
+survey-held-out validation or geographic isolation across different dates.
 
 For each ensemble outer fold, weights are calculated from the selected
 backbones' inner out-of-fold probabilities on that fold's training cells.
@@ -155,8 +176,8 @@ Beach-surface notebooks use the `bs_` prefix. The corresponding grain-size
 notebooks use the `gs_` prefix, beginning with
 `gs_create_dataset_splits.ipynb`.
 
-Beach-surface training performs grid search on the training/validation split
-and evaluates once on the three-survey holdout. Grain-size training performs
+Beach-surface training performs grid search with two validation surveys
+and evaluates once on the three-survey test holdout. Grain-size training performs
 nested CV and separately fits a final deployment model. Both save checkpoints
 and inference metadata. Statistics are fitted independently on each fit's
 training cells, using central-cell pixels only, and shared across context radii
@@ -234,6 +255,8 @@ These folders are created when the corresponding notebooks run. Previous
 generated results were removed from the working tree and remain in Git history;
 historical model checkpoints are stored through Git LFS. Existing notebook
 outputs are retained and should be regenerated for the new evaluation protocol.
+An ignored local `Results/Archive/` folder can hold restored historical results;
+it is not used for current training, evaluation, or inference.
 
 Model-specific directories under `Results/` contain the selected configuration,
 grid-search summaries and traces, normalization statistics, validation and test
@@ -245,6 +268,8 @@ Grain-size evaluation artifacts are kept in each `Results/gs_<model>/`
 directory under `cross_validation/fold_<n>/`. Each fold saves inner grid scores,
 per-class and epoch traces, selected configuration, inner OOF probabilities,
 outer predictions, checkpoint, normalization, metrics, and timing.
+`training_cells.csv`, `evaluation_cells.csv`, and `inner_partition_summary.csv`
+record the fit membership, fold sizes, and buffer exclusions for auditability.
 `cross_validation/oof_predictions.csv` pools all outer predictions, with one
 prediction per cell. `fold_metrics_and_timing.csv`, `cv_summary.csv` (mean and
 sample standard deviation), `fold_per_class_metrics.csv`,
