@@ -18,14 +18,30 @@ The workflow has two classification stages:
 The experiments include five backbone models:
 
 - Small CNN, trained from random initialization without spatial resizing.
-- EfficientNetV2-S, adapted to five input channels.
-- ViT-Tiny (`vit_tiny_patch16_224`), adapted to five input channels.
-- Swin-Tiny, adapted to five input channels.
-- ConvNeXt-Tiny, adapted to five input channels.
+- EfficientNetV2-S, adapted to the selected input channels.
+- ViT-Tiny (`vit_tiny_patch16_224`), adapted to the selected input channels.
+- Swin-Tiny, adapted to the selected input channels.
+- ConvNeXt-Tiny, adapted to the selected input channels.
 
 The four pretrained backbones are also compared using hard voting, probability
 voting, globally weighted probability voting, and model-and-class weighted
 probability voting. The Small CNN is retained as a standalone baseline.
+
+## Channel Ablation
+
+Both stages compare four input setups: `RGB_only` (3 channels), `RGB_slope`
+(4 channels), `RGB_elevation` (4 channels), and `RGB_slope_elevation` (5 channels).
+`Source/channel_setups.py::get_channel_setup` reads `BEACH_CHANNEL_SETUP`;
+when unset, an individual training or evaluation notebook defaults to
+`RGB_slope_elevation`. Each notebook run processes just one selected setup.
+The batch launchers instead default to running all four setups sequentially.
+
+The ablation preserves the beach-surface survey holdout, grain-size nested
+spatial-group CV, context-radius search, training-only normalization, model
+selection, and ensemble-weight protocols described below. Splits and fold plans
+are shared across setups and generated only once. Running all four setups means
+four complete training/evaluation runs, approximately **4x the computational
+cost** of one setup; actual time depends on channel count and early stopping.
 
 ## Project Layout
 
@@ -198,10 +214,48 @@ Full-dataset classification is performed by:
 
 - `bs_classify_all_cells_convnext.ipynb`
 - `bs_classify_all_cells_weighted_ensemble.ipynb`
+- `bs_classify_all_cells_weighted_per_class_ensemble.ipynb`
 - `gs_classify_beach_surfaces_weighted_ensemble.ipynb`
 
 The inference notebooks read matrices directly from `Data/Raw/beach_all`; they
-do not copy the source dataset.
+do not copy the source dataset. Outputs are separated by the selected channel
+setup. ConvNeXt-only beach-surface inference writes to
+`Results/bs_all_cells_classification/<setup>/<date>/classification.csv`.
+Global ensemble inference writes to
+`Results/bs_all_cells_classification/weighted_ensemble/<setup>/<date>/classification.csv`;
+grain-size inference writes to
+`Results/gs_all_cells_classification/weighted_ensemble/<setup>/<date>/classification.csv`.
+
+The beach-surface `weighted_per_class` notebook explicitly uses
+model-and-class weighted probability voting with the saved class-specific
+validation F1 weights. It reuses the existing best checkpoints and each model's
+own context and normalization; no retraining is needed. Output is kept separate
+at `Results/bs_all_cells_classification/weighted_ensemble_per_class/<setup>/<date>/classification.csv`.
+The existing global-weighting notebook writes to `weighted_ensemble/<setup>/`.
+The class-weighted notebook prints seconds per backbone and survey, ensemble
+calculation time, and total survey time. Timings are saved to each survey's
+`prediction_timing.csv` and the setup output root's `classification_summary.csv`, updated after
+each survey. `run_timing.json` records completed-run wall time including model
+loading. Backbone timings include input I/O and preprocessing; ensemble timings
+exclude those operations. Survey totals include prediction CSV writing but not
+timing-report writing.
+The grain-size inference notebook reads the matching setup's global BS output path;
+to run grain-size inference on the new class-weighted surface maps, set its
+`FIRST_STAGE_CLASSIFICATION_ROOT` to
+`Results/bs_all_cells_classification/weighted_ensemble_per_class/<setup>/`.
+
+Run the class-weighted all-cell notebook as a detached batch job:
+
+```bash
+mkdir -p Notebooks/executed_notebooks
+nohup python -u -m jupyter nbconvert \
+  --debug --to notebook \
+  --execute Notebooks/bs_classify_all_cells_weighted_per_class_ensemble.ipynb \
+  --output bs_classify_all_cells_weighted_per_class_ensemble_executed.ipynb \
+  --output-dir Notebooks/executed_notebooks \
+  --ExecutePreprocessor.timeout=-1 \
+  > bs_classify_all_cells_weighted_per_class_ensemble_debug.log 2>&1 &
+```
 
 ## Remote Batch Execution
 
@@ -214,8 +268,14 @@ pipeline. From the repository root, run:
 ```
 
 The `all` and `training` modes first execute the corresponding split/fold
-notebook. Individual model jobs reuse the saved metadata. Grain-size nested CV
-requires many more fits than a single split; grid configurations are distributed
+notebook once, independently of channel selection. Then, for each setup, `all`
+runs all five model jobs followed by ensemble evaluation; `training` omits the
+ensemble. Explicit jobs run in the supplied order within each setup and reuse
+the saved metadata unless `splits` is requested. An explicitly requested
+`splits` job runs once before all setup-dependent jobs, even if repeated or
+listed last. Selecting only `splits` does not run training or evaluation.
+Grain-size nested CV requires many more fits than a single split;
+grid configurations are distributed
 over the dynamically detected CUDA devices. Each notebook can also be executed
 directly with `jupyter nbconvert --execute` and unlimited execution timeout.
 
@@ -226,15 +286,33 @@ Individual jobs can also be selected:
 ./gs_run_remote_notebooks.sh training
 ```
 
+To run a single setup, set `BEACH_CHANNEL_SETUP` for either launcher:
+
+```bash
+BEACH_CHANNEL_SETUP=RGB_only ./bs_run_remote_notebooks.sh all
+BEACH_CHANNEL_SETUP=RGB_elevation ./gs_run_remote_notebooks.sh convnext ensemble
+```
+
+Only the four setup names listed above are accepted; invalid values (including
+an explicitly empty value) are rejected before any detached worker launches.
+Unset the variable to restore the four-setup batch default. For direct notebook
+execution, set the variable in the notebook process/kernel environment; leaving
+it unset selects only `RGB_slope_elevation`, not the full batch.
+
 Set `BEACH_PYTHON` when a specific interpreter is required:
 
 ```bash
 BEACH_PYTHON=/path/to/python ./bs_run_remote_notebooks.sh all
 ```
 
-Each job writes a debug log to the repository root. Executed notebooks are
-written to `Notebooks/executed_notebooks/`; this generated directory is ignored
-by Git.
+Each setup-dependent job writes a debug log to the repository root named
+`<notebook_stem>_<setup>_debug.log`. Its executed notebook is written to
+`Notebooks/executed_notebooks/<setup>/<notebook_stem>_executed.ipynb`.
+The channel-independent split job retains `<notebook_stem>_debug.log` and
+`Notebooks/executed_notebooks/<notebook_stem>_executed.ipynb`. This generated
+notebook directory is ignored by Git. A pipeline log records the sequential
+run; a failing notebook stops the pipeline. Rerunning a job for the same setup
+replaces that job's debug log and executed notebook.
 
 ## Results
 
@@ -244,6 +322,10 @@ classification and `gs_` for grain-size classification. For example:
 ```text
 Results/
 |-- bs_convnext_tiny/          # Other backbones use the same bs_ prefix
+|   |-- RGB_only/
+|   |-- RGB_slope/
+|   |-- RGB_elevation/
+|   `-- RGB_slope_elevation/
 |-- bs_ensemble/
 |-- bs_all_cells_classification/
 |-- gs_convnext_tiny/          # Other backbones use the same gs_ prefix
@@ -251,20 +333,46 @@ Results/
 `-- gs_all_cells_classification/
 ```
 
-These folders are created when the corresponding notebooks run. Previous
-generated results were removed from the working tree and remain in Git history;
-historical model checkpoints are stored through Git LFS. Existing notebook
+Training and ensemble outputs are isolated under
+`Results/{bs,gs}_<model>/<setup>/`, including
+`Results/bs_ensemble/<setup>/` and `Results/gs_ensemble/<setup>/`.
+All four setup names use the same layout; no setup overwrites another's
+checkpoints, metrics, or ensemble weights. Historical files directly in a
+model's root are not new setup-specific results.
+
+BS training and ensemble evaluation leave `experiment_in_progress.json` in the
+setup directory until all required outputs have been saved. Inference and
+reporting reject a directory with this marker, including one left by an
+interrupted rerun; rerun the corresponding notebook to completion. GS uses its
+existing CV completion manifests for the same purpose. Grid-score ties retain
+the original configuration order, so the first summary row agrees with the
+saved winner.
+
+New ensemble definitions fingerprint the exact component metadata. Loading or
+reporting rejects changed backbones rather than reusing their old ensemble
+weights, and checkpoint checksums are verified when recorded in metadata.
+Legacy BS ensemble definitions without fingerprints emit a warning during
+loading; rerun `bs_evaluate_ensemble.ipynb` for the relevant setup before
+deployment to generate a fingerprinted definition. This does not require
+retraining unchanged backbones.
+
+These folders are created when the corresponding notebooks run. Existing results
+for the five beach-surface models and their ensemble were moved into their
+`RGB_slope_elevation/` subfolders, preserving scores and checkpoints. The baseline
+ensemble's stored model paths are relative and point to the relocated setup
+directories. This relocation does not retrain or reevaluate the models.
+Historical model checkpoints are stored through Git LFS. Existing notebook
 outputs are retained and should be regenerated for the new evaluation protocol.
 An ignored local `Results/Archive/` folder can hold restored historical results;
 it is not used for current training, evaluation, or inference.
 
-Model-specific directories under `Results/` contain the selected configuration,
-grid-search summaries and traces, normalization statistics, validation and test
+Model-specific setup directories under `Results/` contain the selected
+configuration, grid-search summaries and traces, normalization statistics, validation and test
 metrics, predictions, inference metadata, and the best loadable checkpoint.
 Ensemble directories contain validation-derived weights, predictions,
 classification reports, and confusion matrices.
 
-Grain-size evaluation artifacts are kept in each `Results/gs_<model>/`
+Grain-size evaluation artifacts are kept in each `Results/gs_<model>/<setup>/`
 directory under `cross_validation/fold_<n>/`. Each fold saves inner grid scores,
 per-class and epoch traces, selected configuration, inner OOF probabilities,
 outer predictions, checkpoint, normalization, metrics, and timing.
@@ -274,9 +382,9 @@ record the fit membership, fold sizes, and buffer exclusions for auditability.
 prediction per cell. `fold_metrics_and_timing.csv`, `cv_summary.csv` (mean and
 sample standard deviation), `fold_per_class_metrics.csv`,
 `cv_per_class_summary.csv`, and pooled reports provide complementary summaries.
-The model directory root contains the separate all-data deployment checkpoint,
+The model setup directory root contains the separate all-data deployment checkpoint,
 metadata, configuration search, inner OOF predictions, and deployment timings.
-`Results/gs_ensemble/cross_validation/` stores the corresponding results for
+`Results/gs_ensemble/<setup>/cross_validation/` stores the corresponding results for
 all four ensembles; its root `ensemble_definition.json` contains deployment
 weights compatible with the existing whole-dataset classification notebook.
 
@@ -301,6 +409,15 @@ recall, macro F1-score, Matthews correlation coefficient, exact confusion
 matrices, and one-vs-rest precision-recall curves. They also print LaTeX tables
 for aggregate metrics, per-class metrics, best backbones, and selected
 grid-search configurations.
+
+Appended channel-ablation comparison sections in
+`bs_example_metrics_reporting.ipynb` and `gs_example_metrics_reporting.ipynb`
+compare the available setup-specific quality metrics across backbones and
+ensemble rules. These appended comparisons do not currently compare computational
+timings; timing artifacts are still saved separately for each setup.
+Beach-surface comparisons use the preserved
+test holdout; grain-size comparisons use outer-fold/OOF evaluation, not deployment
+training scores. Run these reporting notebooks after the setup batches finish.
 
 Model checkpoints (`*.pt`) are tracked through Git LFS. After cloning the
 repository, install Git LFS and materialize the checkpoints with:

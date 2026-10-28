@@ -113,7 +113,7 @@ def run_grid_search(
     best_model = model_factory(best_config).to(device)
     best_model.load_state_dict(best_state)
     summary = pd.DataFrame(summary_rows).sort_values(
-        "validation_macro_f1", ascending=False
+        "validation_macro_f1", ascending=False, kind="stable"
     )
     metric_trace = pd.DataFrame(metric_trace_rows)
     return GridSearchResult(
@@ -207,7 +207,7 @@ def _run_grid_search_parallel(
     best_model.load_state_dict(best_result["state_dict"])
 
     summary = pd.DataFrame(summary_rows).sort_values(
-        "validation_macro_f1", ascending=False
+        "validation_macro_f1", ascending=False, kind="stable"
     )
     metric_trace = pd.DataFrame(metric_trace_rows)
     return GridSearchResult(

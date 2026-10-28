@@ -1,0 +1,2 @@
+learning_rate,weight_decay,dropout,pretrained,context_radius,run_index,device,epochs_trained,best_validation_loss,best_validation_accuracy,validation_macro_f1,training_seconds,validation_prediction_seconds,best_epoch
+3e-05,0.0001,0.0,True,3,14,cuda,10,0.6355569041839839,0.8664521319388576,0.8006266174864398,2579.53199220798,51.21721529797651,5

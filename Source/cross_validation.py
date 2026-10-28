@@ -33,6 +33,40 @@ ENSEMBLE_METHODS = (
 )
 
 
+def _channel_configuration(feature_suffixes, channel_setup=None):
+    from Source.channel_setups import CHANNEL_SETUPS, get_channel_setup
+
+    if feature_suffixes is None:
+        setup_name, feature_suffixes = get_channel_setup(channel_setup)
+    else:
+        if isinstance(feature_suffixes, str):
+            raise ValueError("feature_suffixes must be a sequence of channel suffixes, not a string")
+        feature_suffixes = tuple(feature_suffixes)
+        setup_name = next((name for name, suffixes in CHANNEL_SETUPS.items()
+                           if tuple(suffixes) == feature_suffixes), None)
+        if channel_setup is not None:
+            expected_name, expected_suffixes = get_channel_setup(channel_setup)
+            if feature_suffixes != tuple(expected_suffixes):
+                raise ValueError(f"feature_suffixes do not match channel setup {expected_name}")
+            setup_name = expected_name
+    feature_suffixes = tuple(feature_suffixes)
+    if (not feature_suffixes or len(set(feature_suffixes)) != len(feature_suffixes)
+            or not set(feature_suffixes).issubset(FEATURE_SUFFIXES)):
+        raise ValueError("feature_suffixes must contain unique, supported channel suffixes")
+    return {"channel_setup": setup_name, "feature_suffixes": list(feature_suffixes),
+            "in_channels": len(feature_suffixes)}
+
+
+def _check_channel_configuration(metadata, channels, source, *, legacy=False):
+    # Pre-ablation completed manifests did not record channels; they used all five.
+    suffixes = metadata.get("feature_suffixes", FEATURE_SUFFIXES if legacy else ())
+    if (tuple(suffixes) != tuple(channels["feature_suffixes"])
+            or metadata.get("in_channels", len(suffixes)) != channels["in_channels"]
+            or (metadata.get("channel_setup") is not None
+                and metadata["channel_setup"] != channels["channel_setup"])):
+        raise ValueError(f"{source}: incompatible channel configuration; select matching model result directories")
+
+
 def fingerprint(frame, columns=None):
     columns = columns or [c for c in ("date", "cell_id", "class", "spatial_group", "max_context_radius", "outer_fold", "inner_fold") if c in frame]
     records = frame[columns].astype(str).sort_values(columns).to_dict("records")
@@ -241,9 +275,18 @@ def run_nested_cv(
     model_type, class_name_by_code, image_size=224, model_name=None,
     batch_size=32, num_workers=8, epochs=50, early_stopping_patience=5,
     early_stopping_min_delta=1e-4, augment=True, device=None, random_seed=42,
+    feature_suffixes=None, channel_setup=None,
 ):
+    """Fit nested CV and deployment models using the selected, ordered channels.
+
+    Omitted channels use channel_setup or BEACH_CHANNEL_SETUP. The caller's
+    model_factory(config) must use the selected input-channel count. output_dir
+    is used as supplied.
+    """
     from Source.training import get_device
 
+    channels = _channel_configuration(feature_suffixes, channel_setup)
+    feature_suffixes = tuple(channels["feature_suffixes"])
     device = device or get_device()
     output_dir, cell_data_root = Path(output_dir), Path(cell_data_root)
     cv_root = output_dir / "cross_validation"
@@ -259,7 +302,7 @@ def run_nested_cv(
     maximum_radius = manifest["max_context_radius"]
     if any(_validate_radius(config["context_radius"]) > maximum_radius for config in grid):
         raise ValueError("Grid context radius exceeds the saved spatial buffer; regenerate the CV plan")
-    experiment = {**manifest, "run_id": uuid4().hex, "model_type": model_type, "parameter_grid": grid,
+    experiment = {**manifest, **channels, "run_id": uuid4().hex, "model_type": model_type, "parameter_grid": grid,
                   "image_size": image_size, "epochs": epochs, "batch_size": batch_size,
                   "augmentation": augment, "early_stopping_patience": early_stopping_patience,
                   "early_stopping_min_delta": early_stopping_min_delta}
@@ -270,6 +313,7 @@ def run_nested_cv(
 
     def dataset(frame, config, mean, std, training=False):
         return BeachCellDataset(frame, cell_data_root, mapping, image_size=image_size,
+                                feature_suffixes=feature_suffixes,
                                 mean=mean, std=std, augment=training and augment,
                                 context_radius=int(config["context_radius"]))
 
@@ -290,7 +334,8 @@ def run_nested_cv(
                 )
                 fit = fit.reset_index(drop=True)
                 _check_partition(fit, validation, set(mapping), maximum_radius)
-                stats[fold] = compute_channel_stats(fit, cell_data_root, context_radius=0)
+                stats[fold] = compute_channel_stats(fit, cell_data_root,
+                                                   feature_suffixes=feature_suffixes, context_radius=0)
                 parts[fold] = (fit, validation)
                 partition_rows.append({"inner_fold": fold, "training_cells": len(fit),
                                        "validation_cells": len(validation), "buffer_excluded_cells": len(excluded)})
@@ -363,7 +408,8 @@ def run_nested_cv(
     def refit(training, config, refit_epochs, destination, outer):
         destination.mkdir(parents=True, exist_ok=True)
         with elapsed_seconds(device) as preparation:
-            mean, std = compute_channel_stats(training, cell_data_root, context_radius=0)
+            mean, std = compute_channel_stats(training, cell_data_root,
+                                              feature_suffixes=feature_suffixes, context_radius=0)
         torch.manual_seed(random_seed + outer)
         model = model_factory(config).to(device)
         criterion = nn.CrossEntropyLoss(weight=class_weights(training, mapping).to(device))
@@ -376,12 +422,14 @@ def run_nested_cv(
                 history.append({"epoch": epoch, **scores})
         checkpoint = destination / f"{model_type}_best.pt"
         torch.save({key: value.detach().cpu() for key, value in model.state_dict().items()}, checkpoint)
+        from Source.bs_splits import file_sha256
         metadata = {
             "model_type": model_type, "checkpoint_filename": checkpoint.name,
+            "checkpoint_sha256": file_sha256(checkpoint),
             "image_size": image_size if image_size is not None else 20 * (2 * int(config["context_radius"]) + 1),
             "context_radius": int(config["context_radius"]),
             "context_window_size": 2 * int(config["context_radius"]) + 1,
-            "feature_suffixes": list(FEATURE_SUFFIXES), "in_channels": len(FEATURE_SUFFIXES),
+            **channels,
             "num_classes": len(mapping), "class_to_idx": mapping,
             "idx_to_class_code": {str(v): k for k, v in mapping.items()},
             "class_name_by_code": class_name_by_code, "best_config": config,
@@ -398,7 +446,7 @@ def run_nested_cv(
             metadata["model_name"] = model_name
         write_json(destination / "inference_metadata.json", metadata)
         pd.DataFrame(history).to_csv(destination / "training_history.csv", index=False)
-        pd.DataFrame({"feature": FEATURE_SUFFIXES, "mean": mean, "std": std}).to_csv(destination / "normalization_stats.csv", index=False)
+        pd.DataFrame({"feature": feature_suffixes, "mean": mean, "std": std}).to_csv(destination / "normalization_stats.csv", index=False)
         return model, mean, std, fitting["seconds"], preparation["seconds"]
 
     for outer in range(1, manifest["outer_folds"] + 1):
@@ -474,10 +522,17 @@ def _aligned_probabilities(path, expected, class_codes):
     return probabilities
 
 
-def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_name_by_code):
-    """Combine saved outer-fold predictions; weights use only inner OOF labels."""
+def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_name_by_code,
+                              feature_suffixes=None, channel_setup=None):
+    """Combine matching-channel models; weights use only inner OOF labels.
+
+    Omitted channels/setup are inferred from the first deployment artifact.
+    All directory arguments are used as supplied.
+    """
     from Source.ensemble import macro_f1_weights, per_class_f1_weights
 
+    channels = (_channel_configuration(feature_suffixes, channel_setup)
+                if feature_suffixes is not None or channel_setup is not None else None)
     if len(model_result_dirs) < 2 or "small_cnn" in model_result_dirs:
         raise ValueError("Ensembles require at least two pretrained backbones; Small CNN is a baseline")
     samples, _, manifest = read_cv_plan(cv_dir)
@@ -498,6 +553,11 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
             if completed[key] != manifest[key]:
                 raise ValueError(f"{name}: incompatible {key}; rerun training with the current CV plan")
         metadata = json.loads((directory / "inference_metadata.json").read_text())
+        if channels is None:
+            channels = _channel_configuration(metadata.get("feature_suffixes", ()),
+                                               metadata.get("channel_setup"))
+        _check_channel_configuration(completed, channels, name, legacy=True)
+        _check_channel_configuration(metadata, channels, name)
         if (metadata.get("purpose") != "deployment"
                 or metadata.get("cv_sample_hash") != manifest["sample_hash"]
                 or metadata.get("cv_inner_hash") != manifest["inner_hash"]
@@ -587,7 +647,7 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
 
     scores, global_weights, class_scores, by_class, fitting = weights(0)
     definition = {
-        "protocol": PROTOCOL, "cv_sample_hash": manifest["sample_hash"],
+        "protocol": PROTOCOL, **channels, "cv_sample_hash": manifest["sample_hash"],
         "cv_inner_hash": manifest["inner_hash"],
         "max_context_radius": manifest["max_context_radius"],
         "buffer_distance_cells": manifest["buffer_distance_cells"],
@@ -606,7 +666,7 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
         "weight_source": "all_data_deployment_inner_oof_not_outer_evaluation_predictions",
     }
     write_json(output_dir / "ensemble_definition.json", definition)
-    write_json(cv_root / "completed.json", {**manifest, "models": experiments})
+    write_json(cv_root / "completed.json", {**manifest, **channels, "models": experiments})
     return {"fold_metrics": folds, "summary": summarize_folds(folds), "oof_predictions": oof,
             "per_class_fold_metrics": class_folds,
             "pooled_metrics": pd.DataFrame(pooled), "deployment_weights": pd.DataFrame([

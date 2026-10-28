@@ -1,0 +1,231 @@
+{
+  "split_provenance": {
+    "policy": "bs_survey_disjoint_train_validation_test_v2",
+    "test_dates": [
+      "20180812",
+      "20180915",
+      "20220910"
+    ],
+    "validation_dates": [
+      "20230731",
+      "20240623"
+    ],
+    "csv_sha256": {
+      "train": "707b983082044a17be9d6611c959cafb19a3b634cc23bcfc9e64a13f59097bd9",
+      "validation": "38c36754fae174dddeca69105b5249bf7e332c53fb7a9e692aef0c87497ad545",
+      "test": "afbe2da57f9aa9bf7af2ea7cdd1e93ab593439d8a9d247f643bd5a5cce1ef8b9"
+    }
+  },
+  "selection_metric": "validation_macro_f1",
+  "candidate_methods": [
+    "hard_voting",
+    "probability_voting",
+    "weighted_probability_per_model",
+    "weighted_probability_per_model_class"
+  ],
+  "validation_selected_method": "weighted_probability_per_model_class",
+  "validation_search": [
+    {
+      "method": "hard_voting",
+      "accuracy": 0.8809332260659695,
+      "macro_precision": 0.8777671774706028,
+      "macro_recall": 0.8468040830120735,
+      "macro_f1": 0.8507935179938043,
+      "weighted_f1": 0.8790042767216583,
+      "selected": false
+    },
+    {
+      "method": "probability_voting",
+      "accuracy": 0.8857602574416734,
+      "macro_precision": 0.8803361543854635,
+      "macro_recall": 0.8478189676188389,
+      "macro_f1": 0.8523034219825222,
+      "weighted_f1": 0.8838135652995156,
+      "selected": false
+    },
+    {
+      "method": "weighted_probability_per_model",
+      "accuracy": 0.8889782783588094,
+      "macro_precision": 0.8835560122076977,
+      "macro_recall": 0.8498359233050623,
+      "macro_f1": 0.8551428421374221,
+      "weighted_f1": 0.8868751048706373,
+      "selected": false
+    },
+    {
+      "method": "weighted_probability_per_model_class",
+      "accuracy": 0.8889782783588094,
+      "macro_precision": 0.8840199603510916,
+      "macro_recall": 0.8498359233050623,
+      "macro_f1": 0.8553973589822274,
+      "weighted_f1": 0.8868636382330359,
+      "selected": true
+    }
+  ],
+  "global_model_weights": {
+    "convnext_tiny": 0.2561936169248517,
+    "vit_tiny": 0.23775793930096817,
+    "swin_tiny": 0.27305577353147087,
+    "efficientnetv2_s": 0.23299267024270925
+  },
+  "validation_model_macro_f1": {
+    "convnext_tiny": 0.8212415030641461,
+    "vit_tiny": 0.7621450127472731,
+    "swin_tiny": 0.8752939927504325,
+    "efficientnetv2_s": 0.7468697035070061
+  },
+  "weights_by_model_and_class": {
+    "convnext_tiny": {
+      "0": 0.25614952251809436,
+      "1": 0.2519798357517411,
+      "2": 0.26147220755653977,
+      "3": 0.25822240521563683,
+      "4": 0.2584700392876477,
+      "5": 0.26336157178302966,
+      "6": 0.2462216424140644,
+      "7": 0.2481617937175212,
+      "8": 0.2748496150431308,
+      "9": 0.23619948795496398
+    },
+    "vit_tiny": {
+      "0": 0.25140601284183334,
+      "1": 0.2564289179239227,
+      "2": 0.24184576792271506,
+      "3": 0.24537287929004403,
+      "4": 0.22646117023077486,
+      "5": 0.22152000330216154,
+      "6": 0.24815179861004133,
+      "7": 0.25244369552990165,
+      "8": 0.24721547178860048,
+      "9": 0.14024344597325986
+    },
+    "swin_tiny": {
+      "0": 0.25454858800235625,
+      "1": 0.2650725893146167,
+      "2": 0.2720788360187214,
+      "3": 0.2445360226790978,
+      "4": 0.27741657408015086,
+      "5": 0.26771816051256886,
+      "6": 0.26974600315426167,
+      "7": 0.2571781984468165,
+      "8": 0.27083214535052824,
+      "9": 0.42556631881540924
+    },
+    "efficientnetv2_s": {
+      "0": 0.2378958766377161,
+      "1": 0.22651865700971954,
+      "2": 0.22460318850202377,
+      "3": 0.25186869281522134,
+      "4": 0.23765221640142656,
+      "5": 0.24740026440224,
+      "6": 0.2358805558216327,
+      "7": 0.24221631230576063,
+      "8": 0.20710276781774045,
+      "9": 0.1979907472563669
+    }
+  },
+  "validation_f1_by_model_and_class": {
+    "convnext_tiny": {
+      "0": 0.9056603773584906,
+      "1": 0.8422712933753943,
+      "2": 0.8271604938271605,
+      "3": 0.9008264462809917,
+      "4": 0.8720379146919431,
+      "5": 0.8839285714285714,
+      "6": 0.8488372093023255,
+      "7": 0.8715596330275229,
+      "8": 0.8390804597701149,
+      "9": 0.42105263157894735
+    },
+    "vit_tiny": {
+      "0": 0.8888888888888888,
+      "1": 0.8571428571428571,
+      "2": 0.7650727650727651,
+      "3": 0.856,
+      "4": 0.7640449438202247,
+      "5": 0.7434944237918215,
+      "6": 0.8554913294797688,
+      "7": 0.8865979381443299,
+      "8": 0.7547169811320755,
+      "9": 0.25
+    },
+    "swin_tiny": {
+      "0": 0.9,
+      "1": 0.8860353130016051,
+      "2": 0.8607142857142858,
+      "3": 0.8530805687203792,
+      "4": 0.9359605911330049,
+      "5": 0.8985507246376812,
+      "6": 0.9299363057324841,
+      "7": 0.9032258064516129,
+      "8": 0.8268156424581006,
+      "9": 0.7586206896551724
+    },
+    "efficientnetv2_s": {
+      "0": 0.8411214953271028,
+      "1": 0.7571644042232277,
+      "2": 0.7105263157894737,
+      "3": 0.8786610878661087,
+      "4": 0.8018018018018018,
+      "5": 0.8303571428571429,
+      "6": 0.8131868131868132,
+      "7": 0.8506787330316742,
+      "8": 0.632258064516129,
+      "9": 0.35294117647058826
+    }
+  },
+  "class_to_idx": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9
+  },
+  "idx_to_class_code": {
+    "0": "0",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+    "6": "6",
+    "7": "7",
+    "8": "8",
+    "9": "9"
+  },
+  "models": {
+    "convnext_tiny": {
+      "result_dir": "Results/bs_convnext_tiny/RGB_slope_elevation",
+      "checkpoint_path": "Results/bs_convnext_tiny/RGB_slope_elevation/convnext_tiny_best.pt",
+      "metadata_path": "Results/bs_convnext_tiny/RGB_slope_elevation/inference_metadata.json",
+      "context_radius": 2,
+      "image_size": 224
+    },
+    "vit_tiny": {
+      "result_dir": "Results/bs_vit_tiny/RGB_slope_elevation",
+      "checkpoint_path": "Results/bs_vit_tiny/RGB_slope_elevation/vit_tiny_best.pt",
+      "metadata_path": "Results/bs_vit_tiny/RGB_slope_elevation/inference_metadata.json",
+      "context_radius": 1,
+      "image_size": 224
+    },
+    "swin_tiny": {
+      "result_dir": "Results/bs_swin_tiny/RGB_slope_elevation",
+      "checkpoint_path": "Results/bs_swin_tiny/RGB_slope_elevation/swin_tiny_best.pt",
+      "metadata_path": "Results/bs_swin_tiny/RGB_slope_elevation/inference_metadata.json",
+      "context_radius": 2,
+      "image_size": 224
+    },
+    "efficientnetv2_s": {
+      "result_dir": "Results/bs_efficientnetv2_s/RGB_slope_elevation",
+      "checkpoint_path": "Results/bs_efficientnetv2_s/RGB_slope_elevation/efficientnetv2_s_best.pt",
+      "metadata_path": "Results/bs_efficientnetv2_s/RGB_slope_elevation/inference_metadata.json",
+      "context_radius": 1,
+      "image_size": 224
+    }
+  }
+}

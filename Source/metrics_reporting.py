@@ -36,26 +36,228 @@ CLASS_LINE_COLORS = {
 }
 
 
+ABLATION_METRICS = ("Macro F1", "Accuracy", "Macro precision", "Macro recall", "MCC")
+
+
+def _validate_reporting_channels(metadata, setup, name):
+    from Source.channel_setups import CHANNEL_SETUPS
+
+    if not isinstance(metadata, Mapping):
+        raise ValueError(f"{name}: channel metadata must be a JSON object")
+    expected = tuple(CHANNEL_SETUPS[setup])
+    # Historical five-channel artifacts predate setup metadata. This is not a
+    # path fallback: only artifacts in the explicitly selected folder are read.
+    suffixes = metadata.get("feature_suffixes", ("r", "g", "b", "s", "d"))
+    if (
+        tuple(suffixes) != expected
+        or metadata.get("channel_setup", setup) != setup
+        or metadata.get("in_channels", len(expected)) != len(expected)
+    ):
+        raise ValueError(f"{name}: artifact channels do not match channel setup {setup}")
+
+
+def channel_setup_method_specs(
+    results_root: str | Path, dataset: str, setup: str,
+) -> list[dict[str, object]]:
+    """Use only setup-scoped artifacts, never legacy unscoped results."""
+    from Source.channel_setups import CHANNEL_SETUPS
+
+    if dataset not in {"bs", "gs"}:
+        raise ValueError("dataset must be 'bs' or 'gs'")
+    if setup not in CHANNEL_SETUPS:
+        raise ValueError(f"Unknown channel setup: {setup}")
+    prediction_path = (
+        Path("cross_validation") / "oof_predictions.csv"
+        if dataset == "gs" else Path("test_predictions.csv")
+    )
+    backbones = {
+        "Small CNN": "small_cnn",
+        "EfficientNetV2-S": "efficientnetv2_s",
+        "ViT-Tiny": "vit_tiny",
+        "Swin-Tiny": "swin_tiny",
+        "ConvNeXt-Tiny": "convnext_tiny",
+    }
+    ensembles = {
+        "Hard voting": "hard_voting",
+        "Probability voting": "probability_voting",
+        "Globally weighted probability voting": "weighted_probability_per_model",
+        "Model-and-class weighted probability voting": "weighted_probability_per_model_class",
+    }
+    specs = []
+    for name, key in backbones.items():
+        specs.append({
+            "name": name, "type": "Model",
+            "path": Path(results_root) / f"{dataset}_{key}" / setup / prediction_path,
+            "prediction_column": "predicted_class_code",
+        })
+    for name, key in ensembles.items():
+        specs.append({
+            "name": name, "type": "Ensemble",
+            "path": Path(results_root) / f"{dataset}_ensemble" / setup / prediction_path,
+            "prediction_column": f"{key}_predicted_class_code",
+        })
+    return specs
+
+
+def load_channel_ablation_metrics(
+    results_root: str | Path,
+    dataset: str,
+    class_codes: Sequence[int],
+    class_names: Mapping[int, str],
+    *,
+    expected_cv_manifest: Mapping[str, object] | None = None,
+    expected_split_provenance: Mapping[str, object] | None = None,
+    expected_evaluation_frame: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Report every setup/method, with missing or invalid results kept as NaN.
+
+    GS uses pooled outer-held-out predictions and the same manifest/run checks
+    as the single-setup report; deployment/test metrics are never substituted.
+    """
+    from Source.channel_setups import CHANNEL_SETUPS
+
+    if dataset == "gs" and expected_cv_manifest is None:
+        raise ValueError("GS ablation reporting requires the current CV manifest")
+    if dataset == "bs" and (
+        expected_split_provenance is None or expected_evaluation_frame is None
+    ):
+        raise ValueError("BS ablation reporting requires current split provenance and test cells")
+    validation = {
+        "expected_cv_manifest": expected_cv_manifest,
+        "expected_split_provenance": expected_split_provenance,
+        "expected_evaluation_frame": expected_evaluation_frame,
+    }
+    rows = []
+    for setup in CHANNEL_SETUPS:
+        specs = channel_setup_method_specs(results_root, dataset, setup)
+        setup_rows = []
+        valid_specs = []
+        for spec in specs:
+            row = {
+                "Setup": setup, "Method": spec["name"], "Type": spec["type"],
+                **dict.fromkeys(ABLATION_METRICS, np.nan),
+                "Status": "available", "Detail": "", "Path": str(spec["path"]),
+            }
+            try:
+                predictions = load_method_predictions(
+                    [spec], class_codes, expected_channel_setup=setup, **validation,
+                )
+                metrics, _, _ = calculate_method_metrics(predictions, class_codes, class_names)
+                row.update(metrics.iloc[0].to_dict())
+                valid_specs.append(spec)
+            except FileNotFoundError as error:
+                row.update(Status="missing", Detail=str(error))
+            except (ValueError, KeyError, TypeError, OSError) as error:
+                row.update(Status="invalid", Detail=str(error))
+            setup_rows.append(row)
+
+        # A stale ensemble must not erase independently valid backbone scores.
+        model_specs = [spec for spec in valid_specs if spec["type"] == "Model"]
+        for spec in valid_specs:
+            if spec["type"] != "Ensemble":
+                continue
+            try:
+                load_method_predictions(
+                    [*model_specs, spec], class_codes,
+                    expected_channel_setup=setup, **validation,
+                )
+            except (ValueError, KeyError, TypeError, OSError) as error:
+                row = next(row for row in setup_rows if row["Method"] == spec["name"])
+                row.update(dict.fromkeys(ABLATION_METRICS, np.nan))
+                row.update(Status="invalid", Detail=str(error))
+        if model_specs:
+            try:
+                load_method_predictions(
+                    model_specs, class_codes, expected_channel_setup=setup, **validation,
+                )
+            except (ValueError, KeyError, TypeError, OSError) as error:
+                for row in setup_rows:
+                    if row["Status"] == "available" and row["Type"] == "Model":
+                        row.update(dict.fromkeys(ABLATION_METRICS, np.nan))
+                        row.update(Status="invalid", Detail=str(error))
+        rows.extend(setup_rows)
+    return pd.DataFrame(rows)
+
+
+def plot_channel_ablation_metrics(
+    comparison: pd.DataFrame, figure_title: str,
+) -> plt.Figure:
+    """Keep every method/setup slot; mark absent values instead of zero bars."""
+    setups = list(dict.fromkeys(comparison["Setup"]))
+    methods = list(dict.fromkeys(comparison["Method"]))
+    if not setups or not methods:
+        raise ValueError("No channel-ablation results were configured")
+    figure, axes = plt.subplots(3, 2, figsize=(19, 17), layout="constrained")
+    positions = np.arange(len(methods))
+    width = 0.8 / len(setups)
+    colors = plt.get_cmap("tab10")
+    labels = [
+        name.replace(" probability voting", "\nprobability voting")
+        .replace("Model-and-class weighted", "Model-and-class\nweighted")
+        for name in methods
+    ]
+    for axis, metric in zip(axes.flat, ABLATION_METRICS):
+        table = comparison.pivot(index="Method", columns="Setup", values=metric)
+        for index, setup in enumerate(setups):
+            values = table.reindex(index=methods, columns=setups)[setup].to_numpy(float)
+            x = positions + (index - (len(setups) - 1) / 2) * width
+            present = np.isfinite(values)
+            axis.bar(x[present], values[present], width=width, color=colors(index), label=setup)
+            for missing_x in x[~present]:
+                axis.text(
+                    missing_x, 0.02, "N/A", rotation=90, ha="center", va="bottom",
+                    fontsize=7, color=colors(index), transform=axis.get_xaxis_transform(),
+                )
+        axis.set_title(metric)
+        axis.set_xticks(positions, labels, rotation=40, ha="right", fontsize=8)
+        axis.set_xlim(-0.5, len(methods) - 0.5)
+        axis.set_ylim((-1.05 if metric == "MCC" else 0), 1.05)
+        axis.set_ylabel(metric)
+        axis.grid(axis="y", alpha=0.25)
+        axis.set_axisbelow(True)
+    axes.flat[-1].axis("off")
+    handles = [Patch(facecolor=colors(i), label=setup) for i, setup in enumerate(setups)]
+    axes.flat[-1].legend(handles=handles, loc="center", title="Channel setup", frameon=False)
+    axes.flat[-1].text(
+        0.5, 0.2, "N/A: missing or invalid results (see status table).",
+        ha="center", transform=axes.flat[-1].transAxes,
+    )
+    figure.suptitle(figure_title)
+    return figure
+
+
 def load_method_predictions(
     method_specs: Sequence[Mapping[str, object]],
     class_codes: Sequence[int],
     expected_cv_manifest: Mapping[str, object] | None = None,
     expected_split_provenance: Mapping[str, object] | None = None,
     expected_evaluation_frame: pd.DataFrame | None = None,
+    expected_channel_setup: str | None = None,
 ) -> dict[str, dict[str, object]]:
     expected_classes = set(map(int, class_codes))
     loaded: dict[str, dict[str, object]] = {}
     reference_truth: pd.Series | None = None
     cv_model_runs = {}
     cv_ensemble_runs = []
+    bs_model_hashes = {}
+    bs_ensemble_hashes = []
 
     for spec in method_specs:
         name = str(spec["name"])
         result_type = str(spec["type"])
         path = Path(spec["path"])
+        from Source.channel_setups import require_completed_result
+        require_completed_result(path.parent.parent if path.parent.name == "cross_validation" else path.parent)
         if expected_cv_manifest is not None:
             import json
             completed = json.loads((path.parent / "completed.json").read_text())
+            if expected_channel_setup is not None:
+                _validate_reporting_channels(completed, expected_channel_setup, name)
+                if result_type != "Model":
+                    if not isinstance(completed.get("models"), Mapping):
+                        raise ValueError(f"{name}: CV ensemble models must be a JSON object")
+                    for model_type, experiment in completed["models"].items():
+                        _validate_reporting_channels(experiment, expected_channel_setup, model_type)
             for key in ("protocol", "sample_hash", "inner_hash", "random_seed", "max_context_radius"):
                 if completed.get(key) != expected_cv_manifest[key]:
                     raise ValueError(f"{name}: stale CV results ({key}); rerun this method")
@@ -67,6 +269,14 @@ def load_method_predictions(
             import json
             artifact_file = "inference_metadata.json" if result_type == "Model" else "ensemble_definition.json"
             metadata = json.loads((path.parent / artifact_file).read_text())
+            if result_type == "Model":
+                from hashlib import sha256
+                model_type = metadata.get("model_type", path.parent.parent.name.removeprefix("bs_"))
+                bs_model_hashes[model_type] = sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
+            elif metadata.get("deployment_model_metadata_hashes") is not None:
+                bs_ensemble_hashes.append(metadata["deployment_model_metadata_hashes"])
+            if expected_channel_setup is not None:
+                _validate_reporting_channels(metadata, expected_channel_setup, name)
             if metadata.get("split_provenance") != expected_split_provenance:
                 raise ValueError(f"{name}: stale beach-surface results; rerun training/evaluation")
         prediction_column = str(spec["prediction_column"])
@@ -147,6 +357,10 @@ def load_method_predictions(
         for model_type, experiment in ensemble_runs.items():
             if model_type in cv_model_runs and cv_model_runs[model_type] != experiment["run_id"]:
                 raise ValueError(f"{model_type} was retrained after ensemble evaluation; rerun the ensembles")
+    for ensemble_hashes in bs_ensemble_hashes:
+        for model_type, metadata_hash in bs_model_hashes.items():
+            if model_type in ensemble_hashes and metadata_hash != ensemble_hashes[model_type]:
+                raise ValueError(f"{model_type} was retrained after beach-surface ensemble evaluation; rerun the ensembles")
     return loaded
 
 

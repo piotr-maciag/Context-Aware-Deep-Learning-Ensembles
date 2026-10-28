@@ -1,0 +1,92 @@
+{
+  "model_type": "vit_tiny",
+  "checkpoint_filename": "vit_tiny_best.pt",
+  "checkpoint_sha256": "dfb10946dd17445e6d2d702c0af8389af0ff049dac7ba8225d4b24cd7e8e729d",
+  "split_provenance": {
+    "policy": "bs_survey_disjoint_train_validation_test_v2",
+    "test_dates": [
+      "20180812",
+      "20180915",
+      "20220910"
+    ],
+    "validation_dates": [
+      "20230731",
+      "20240623"
+    ],
+    "csv_sha256": {
+      "train": "707b983082044a17be9d6611c959cafb19a3b634cc23bcfc9e64a13f59097bd9",
+      "validation": "38c36754fae174dddeca69105b5249bf7e332c53fb7a9e692aef0c87497ad545",
+      "test": "afbe2da57f9aa9bf7af2ea7cdd1e93ab593439d8a9d247f643bd5a5cce1ef8b9"
+    }
+  },
+  "model_name": "vit_tiny_patch16_224",
+  "image_size": 224,
+  "context_radius": 1,
+  "context_window_size": 3,
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b",
+    "s",
+    "d"
+  ],
+  "in_channels": 5,
+  "num_classes": 10,
+  "class_to_idx": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9
+  },
+  "idx_to_class_code": {
+    "0": "0",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+    "6": "6",
+    "7": "7",
+    "8": "8",
+    "9": "9"
+  },
+  "class_name_by_code": {
+    "0": "Snow",
+    "1": "Dry sediment",
+    "2": "Wet sediment",
+    "3": "Water",
+    "4": "Bedrock",
+    "5": "Boulder",
+    "6": "Driftwood",
+    "7": "Algae",
+    "8": "Ice",
+    "9": "Anthropogenic"
+  },
+  "best_config": {
+    "learning_rate": 0.0001,
+    "weight_decay": 0.0001,
+    "dropout": 0.0,
+    "pretrained": true,
+    "context_radius": 1
+  },
+  "channel_mean": [
+    116.28041076660156,
+    120.51525115966797,
+    125.25473022460938,
+    15.783857345581055,
+    0.6990510821342468
+  ],
+  "channel_std": [
+    44.513282775878906,
+    46.34864044189453,
+    48.558712005615234,
+    13.092418670654297,
+    1.085370659828186
+  ]
+}

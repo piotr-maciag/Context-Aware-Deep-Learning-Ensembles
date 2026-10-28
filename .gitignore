@@ -2,7 +2,7 @@
 Data/*
 !Data/Preprocessed/
 !Data/Preprocessed/**
-Results/Archive/
+Results/Archive_JSTARS/
 
 
 # Local Python environment

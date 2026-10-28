@@ -1,0 +1,11 @@
+,0: Snow,1: Dry sediment,2: Wet sediment,3: Water,4: Bedrock,5: Boulder,6: Driftwood,7: Algae,8: Ice,9: Anthropogenic
+0: Snow,0,12,0,0,0,0,0,0,0,0
+1: Dry sediment,0,382,38,12,6,0,10,24,2,0
+2: Wet sediment,0,14,174,10,7,2,0,11,5,0
+3: Water,0,0,5,78,4,0,0,0,1,0
+4: Bedrock,0,14,2,2,130,2,0,1,3,0
+5: Boulder,0,0,0,0,5,115,0,1,7,0
+6: Driftwood,0,0,0,0,0,0,120,0,0,0
+7: Algae,0,6,0,0,0,0,0,152,0,0
+8: Ice,0,0,0,1,0,2,0,0,122,0
+9: Anthropogenic,0,0,0,0,0,0,1,0,0,10

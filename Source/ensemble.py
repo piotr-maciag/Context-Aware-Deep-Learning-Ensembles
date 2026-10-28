@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from time import perf_counter
 from typing import Sequence
 
 import numpy as np
@@ -34,6 +35,8 @@ def load_model_artifact(
     checkpoint_filename: str | None = None,
 ) -> ModelArtifact:
     result_dir = Path(result_dir)
+    from Source.channel_setups import require_completed_result
+    require_completed_result(result_dir)
     metadata_path = result_dir / "inference_metadata.json"
     if not metadata_path.exists():
         raise FileNotFoundError(f"Missing inference metadata: {metadata_path}")
@@ -41,6 +44,13 @@ def load_model_artifact(
     with metadata_path.open("r", encoding="utf-8") as file:
         metadata = json.load(file)
     metadata.setdefault("model_type", name)
+    if metadata.get("protocol") in ("nested_stratified_cell_cv_v1", "nested_spatial_group_cv_v2"):
+        completion_path = result_dir / "cross_validation" / "completed.json"
+        if not completion_path.exists():
+            raise ValueError(f"{name}: grain-size experiment is incomplete; finish nested CV and deployment fitting")
+        completion = json.loads(completion_path.read_text())
+        if metadata.get("purpose") != "deployment" or metadata.get("run_id") != completion.get("run_id"):
+            raise ValueError(f"{name}: deployment model does not match its completed grain-size experiment")
 
     if checkpoint_filename is None:
         checkpoint_filename = metadata.get("checkpoint_filename")
@@ -50,6 +60,10 @@ def load_model_artifact(
     checkpoint_path = result_dir / checkpoint_filename
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Missing model checkpoint: {checkpoint_path}")
+    if metadata.get("checkpoint_sha256") is not None:
+        from Source.bs_splits import file_sha256
+        if file_sha256(checkpoint_path) != metadata["checkpoint_sha256"]:
+            raise ValueError(f"{name}: checkpoint does not match its saved metadata; retrain or restore the matching checkpoint")
 
     return ModelArtifact(
         name=name,
@@ -169,27 +183,64 @@ def weighted_average_probabilities(
     return combined
 
 
-def load_global_weighted_ensemble(
-    artifacts: Sequence[ModelArtifact],
-    definition_path: Path,
-    device: torch.device,
-) -> tuple[dict[str, torch.nn.Module], dict[str, float], dict]:
-    """Load the best models and validation-derived global ensemble weights."""
+def _load_ensemble_definition(artifacts, definition_path):
+    validate_artifact_compatibility(artifacts)
     definition_path = Path(definition_path)
+    from Source.channel_setups import require_completed_result
+    require_completed_result(definition_path.parent)
     if not definition_path.exists():
         raise FileNotFoundError(f"Missing ensemble definition: {definition_path}")
 
     with definition_path.open("r", encoding="utf-8") as file:
         definition = json.load(file)
 
-    if definition.get("protocol") in ("nested_stratified_cell_cv_v1", "nested_spatial_group_cv_v2"):
+    for key in ("class_to_idx", "idx_to_class_code"):
+        if definition.get(key) != artifacts[0].metadata[key]:
+            raise ValueError(f"Ensemble definition and model artifacts have different {key}")
+    if ("feature_suffixes" in definition
+            and definition["feature_suffixes"] != artifacts[0].metadata["feature_suffixes"]):
+        raise ValueError("Ensemble definition and model artifacts use different input channels")
+    if definition.get("channel_setup") is not None:
+        from Source.channel_setups import get_channel_setup
+        _, expected_suffixes = get_channel_setup(definition["channel_setup"])
+        if tuple(artifacts[0].metadata["feature_suffixes"]) != expected_suffixes:
+            raise ValueError("Ensemble definition and model artifacts use different channel setups")
+    if "split_provenance" in definition:
+        for artifact in artifacts:
+            if artifact.metadata.get("split_provenance") != definition["split_provenance"]:
+                raise ValueError(f"{artifact.name}: model and ensemble use different dataset splits")
+
+    grain_size_cv = definition.get("protocol") in ("nested_stratified_cell_cv_v1", "nested_spatial_group_cv_v2")
+    if grain_size_cv and not (definition_path.parent / "cross_validation" / "completed.json").exists():
+        raise ValueError("Grain-size ensemble evaluation is incomplete; rerun it to completion")
+    expected_hashes = definition.get("deployment_model_metadata_hashes")
+    if grain_size_cv or expected_hashes is not None:
         from hashlib import sha256
-        expected_hashes = definition["deployment_model_metadata_hashes"]
+        if not isinstance(expected_hashes, dict) or set(expected_hashes) != {a.name for a in artifacts}:
+            raise ValueError("Ensemble definition must fingerprint exactly the loaded model artifacts")
         for artifact in artifacts:
             metadata_hash = sha256(json.dumps(artifact.metadata, sort_keys=True).encode()).hexdigest()
-            if (artifact.metadata.get("purpose") != "deployment"
+            if ((grain_size_cv and artifact.metadata.get("purpose") != "deployment")
                     or metadata_hash != expected_hashes.get(artifact.name)):
-                raise ValueError(f"{artifact.name}: deployment model changed; rerun grain-size ensemble evaluation")
+                raise ValueError(f"{artifact.name}: model changed; rerun the matching ensemble evaluation")
+    else:
+        import warnings
+        warnings.warn(
+            "Legacy ensemble definition lacks model fingerprints. Rerun ensemble evaluation "
+            "before deployment to verify that saved weights match the current backbones.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return definition
+
+
+def load_global_weighted_ensemble(
+    artifacts: Sequence[ModelArtifact],
+    definition_path: Path,
+    device: torch.device,
+) -> tuple[dict[str, torch.nn.Module], dict[str, float], dict]:
+    """Load the best models and validation-derived global ensemble weights."""
+    definition = _load_ensemble_definition(artifacts, definition_path)
 
     raw_weights = definition.get("global_model_weights")
     if not isinstance(raw_weights, dict) or not raw_weights:
@@ -222,6 +273,36 @@ def load_global_weighted_ensemble(
     return models, weights, definition
 
 
+def load_class_weighted_ensemble(
+    artifacts: Sequence[ModelArtifact],
+    definition_path: Path,
+    device: torch.device,
+) -> tuple[dict[str, torch.nn.Module], dict[str, np.ndarray], dict]:
+    """Load per-model/class weights in output-index order, never JSON key order."""
+    definition = _load_ensemble_definition(artifacts, definition_path)
+    raw_weights = definition.get("weights_by_model_and_class")
+    if not isinstance(raw_weights, dict) or set(raw_weights) != {a.name for a in artifacts}:
+        raise ValueError("Class-weighted ensemble must contain weights for exactly the loaded models")
+    mapping = {int(index): str(code) for index, code in definition["idx_to_class_code"].items()}
+    if set(mapping) != set(range(len(mapping))):
+        raise ValueError("Model output indices must be contiguous from zero")
+    codes = [mapping[index] for index in range(len(mapping))]
+    weights = {}
+    for artifact in artifacts:
+        values = raw_weights[artifact.name]
+        if not isinstance(values, dict) or set(values) != set(codes):
+            raise ValueError(f"{artifact.name}: class weights must match every encoded class")
+        weights[artifact.name] = np.array([values[code] for code in codes], dtype=np.float64)
+    matrix = np.stack(list(weights.values()))
+    if not np.isfinite(matrix).all() or (matrix < 0).any() or (matrix.sum(axis=0) <= 0).any():
+        raise ValueError("Class weights must be finite, non-negative, and have a positive total for every class")
+    totals = matrix.sum(axis=0)
+    weights = {name: values / totals for name, values in weights.items()}
+    models = {artifact.name: load_model_for_inference(artifact.checkpoint_path, artifact.metadata, device=device)
+              for artifact in artifacts}
+    return models, weights, definition
+
+
 @torch.no_grad()
 def predict_model_probabilities_for_cells(
     model: torch.nn.Module,
@@ -240,23 +321,60 @@ def predict_model_probabilities_for_cells(
     return cell_ids, np.concatenate(probability_batches, axis=0)
 
 
-def classify_date_directory_with_global_ensemble(
+def _classify_date_directory_with_weighted_ensemble(
     date_dir: Path,
     source_root: Path,
     output_root: Path,
     artifacts: Sequence[ModelArtifact],
     models: dict[str, torch.nn.Module],
-    weights: dict[str, float],
+    weights: dict[str, float | np.ndarray],
     idx_to_class_code: dict[int, str],
     batch_size: int,
     num_workers: int,
     base_suffix: str,
     device: torch.device,
     candidate_cell_ids: Sequence[str] | None = None,
+    class_weighted: bool = False,
 ) -> dict:
-    """Classify one date with globally weighted probability averaging."""
+    """Keep one running probability sum per date rather than all model outputs."""
+    survey_started = perf_counter()
+    timings = {f"{artifact.name}_prediction_seconds": 0.0 for artifact in artifacts}
+    timings["ensemble_calculation_seconds"] = 0.0
+
+    def finish(row):
+        timings["survey_total_seconds"] = perf_counter() - survey_started
+        row.update(timings)
+        timing_dir = Path(output_root) / date_dir.name
+        timing_dir.mkdir(parents=True, exist_ok=True)
+        timing_path = timing_dir / "prediction_timing.csv"
+        pd.DataFrame([
+            {"date": date_dir.name, "stage": key.removesuffix("_seconds"), "seconds": value}
+            for key, value in timings.items()
+        ]).to_csv(timing_path, index=False)
+        row["timing_path"] = timing_path
+        print(
+            f"  {date_dir.name}: ensemble calculation {timings['ensemble_calculation_seconds']:.3f}s; "
+            f"survey total {timings['survey_total_seconds']:.2f}s",
+            flush=True,
+        )
+        return row
+
     date = date_dir.name
     reference_metadata = artifacts[0].metadata
+    if set(weights) != {artifact.name for artifact in artifacts}:
+        raise ValueError("Probability and weight model names do not match")
+    if class_weighted:
+        saved_mapping = {int(index): str(code) for index, code in reference_metadata["idx_to_class_code"].items()}
+        if saved_mapping != idx_to_class_code:
+            raise ValueError("Prediction class mapping differs from the model output mapping")
+        matrix = np.stack([np.asarray(weights[artifact.name], dtype=np.float64) for artifact in artifacts])
+        if matrix.shape != (len(artifacts), len(idx_to_class_code)):
+            raise ValueError("Each model must have one weight per output class")
+        if not np.isfinite(matrix).all() or (matrix < 0).any() or (matrix.sum(0) <= 0).any():
+            raise ValueError("Invalid class weights")
+        matrix /= matrix.sum(axis=0)
+        weights = {artifact.name: matrix[index] for index, artifact in enumerate(artifacts)}
+    discovery_started = perf_counter()
     if candidate_cell_ids is None:
         cell_ids, incomplete_count = discover_complete_cells_from_base_suffix(
             date_dir,
@@ -280,9 +398,12 @@ def classify_date_directory_with_global_ensemble(
             else:
                 incomplete_count += 1
 
+    timings["cell_discovery_seconds"] = perf_counter() - discovery_started
+    timings["prediction_csv_write_seconds"] = 0.0
     if not cell_ids:
         output_path = None
         if candidate_cell_ids is not None:
+            write_started = perf_counter()
             output_dir = Path(output_root) / date
             output_dir.mkdir(parents=True, exist_ok=True)
             output_path = output_dir / "classification.csv"
@@ -290,23 +411,29 @@ def classify_date_directory_with_global_ensemble(
                 output_path,
                 index=False,
             )
-        return {
+            timings["prediction_csv_write_seconds"] = perf_counter() - write_started
+        return finish({
             "date": date,
             "classified_cells": 0,
             "incomplete_candidates": incomplete_count,
             "device": str(device),
             "output_path": output_path,
-        }
+        })
 
     combined_probabilities = None
     expected_cell_ids = [str(cell_id) for cell_id in cell_ids]
     for artifact in artifacts:
         metadata = artifact.metadata
+        weight_description = ("per-class weights" if class_weighted
+                              else f"weight {weights[artifact.name]:.6f}")
         print(
             f"  {date}: running {artifact.name} "
-            f"(context radius {metadata['context_radius']}, weight {weights[artifact.name]:.6f})",
+            f"(context radius {metadata['context_radius']}, {weight_description})",
             flush=True,
         )
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        prediction_started = perf_counter()
         dataset = CellInferenceDataset(
             source_root=source_root,
             date=date,
@@ -329,23 +456,39 @@ def classify_date_directory_with_global_ensemble(
             loader,
             device,
         )
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        prediction_seconds = perf_counter() - prediction_started
+        timings[f"{artifact.name}_prediction_seconds"] = prediction_seconds
         print(
-            f"  {date}: finished {artifact.name} for {len(predicted_cell_ids):,} cells",
+            f"  {date}: finished {artifact.name} for {len(predicted_cell_ids):,} cells "
+            f"in {prediction_seconds:.2f}s",
             flush=True,
         )
         if predicted_cell_ids != expected_cell_ids:
             raise RuntimeError(f"Cell order changed during inference for {artifact.name}.")
 
-        weighted_probabilities = probabilities.astype(np.float32, copy=False) * np.float32(
-            weights[artifact.name]
-        )
+        ensemble_started = perf_counter()
+        if class_weighted:
+            weighted_probabilities = probabilities.astype(np.float64, copy=False) * weights[artifact.name][None, :]
+        else:
+            weighted_probabilities = probabilities.astype(np.float32, copy=False) * np.float32(weights[artifact.name])
         if combined_probabilities is None:
             combined_probabilities = weighted_probabilities
         else:
             combined_probabilities += weighted_probabilities
+        del probabilities, weighted_probabilities
+        timings["ensemble_calculation_seconds"] += perf_counter() - ensemble_started
 
     if combined_probabilities is None:
         raise RuntimeError(f"No ensemble probabilities were generated for {date}.")
+
+    ensemble_started = perf_counter()
+    if class_weighted:
+        totals = combined_probabilities.sum(axis=1, keepdims=True)
+        if not np.isfinite(combined_probabilities).all() or (totals <= 0).any():
+            raise ValueError("Combined class-weighted probabilities must be finite and positive per cell")
+        combined_probabilities /= totals
 
     predicted_indices = combined_probabilities.argmax(axis=1)
     predictions = pd.DataFrame(
@@ -357,32 +500,67 @@ def classify_date_directory_with_global_ensemble(
             ],
         }
     )
+    timings["ensemble_calculation_seconds"] += perf_counter() - ensemble_started
 
+    write_started = perf_counter()
     output_dir = Path(output_root) / date
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "classification.csv"
     predictions.to_csv(output_path, index=False)
-    return {
+    timings["prediction_csv_write_seconds"] = perf_counter() - write_started
+    return finish({
         "date": date,
         "classified_cells": len(predictions),
         "incomplete_candidates": incomplete_count,
         "device": str(device),
         "output_path": output_path,
-    }
+    })
 
 
-def classify_date_directories_with_global_ensemble(
+def classify_date_directory_with_global_ensemble(
+    date_dir: Path, source_root: Path, output_root: Path,
+    artifacts: Sequence[ModelArtifact], models: dict[str, torch.nn.Module],
+    weights: dict[str, float], idx_to_class_code: dict[int, str],
+    batch_size: int, num_workers: int, base_suffix: str, device: torch.device,
+    candidate_cell_ids: Sequence[str] | None = None,
+) -> dict:
+    """Classify one date using a single global weight per model."""
+    return _classify_date_directory_with_weighted_ensemble(
+        date_dir, source_root, output_root, artifacts, models, weights,
+        idx_to_class_code, batch_size, num_workers, base_suffix, device,
+        candidate_cell_ids=candidate_cell_ids,
+    )
+
+
+def classify_date_directory_with_class_ensemble(
+    date_dir: Path, source_root: Path, output_root: Path,
+    artifacts: Sequence[ModelArtifact], models: dict[str, torch.nn.Module],
+    weights: dict[str, np.ndarray], idx_to_class_code: dict[int, str],
+    batch_size: int, num_workers: int, base_suffix: str, device: torch.device,
+    candidate_cell_ids: Sequence[str] | None = None,
+) -> dict:
+    """Classify one date using saved per-model/class probability weights."""
+    return _classify_date_directory_with_weighted_ensemble(
+        date_dir, source_root, output_root, artifacts, models, weights,
+        idx_to_class_code, batch_size, num_workers, base_suffix, device,
+        candidate_cell_ids=candidate_cell_ids, class_weighted=True,
+    )
+
+
+def _classify_date_directories_with_weighted_ensemble(
     date_dirs: Sequence[Path],
     source_root: Path,
     output_root: Path,
     artifacts: Sequence[ModelArtifact],
     models: dict[str, torch.nn.Module],
-    weights: dict[str, float],
+    weights: dict[str, float | np.ndarray],
     idx_to_class_code: dict[int, str],
     batch_size: int,
     num_workers: int,
     base_suffix: str,
     device: torch.device,
+    *,
+    class_weighted: bool = False,
 ) -> pd.DataFrame:
     """Classify date directories sequentially and report durable nohup progress."""
     output_root = Path(output_root)
@@ -394,7 +572,9 @@ def classify_date_directories_with_global_ensemble(
             f"Starting date {date_index}/{len(date_dirs)}: {date_dir.name}",
             flush=True,
         )
-        row = classify_date_directory_with_global_ensemble(
+        classify_date = (classify_date_directory_with_class_ensemble if class_weighted
+                         else classify_date_directory_with_global_ensemble)
+        row = classify_date(
             date_dir=date_dir,
             source_root=source_root,
             output_root=output_root,
@@ -408,12 +588,40 @@ def classify_date_directories_with_global_ensemble(
             device=device,
         )
         rows.append(row)
+        pd.DataFrame(rows).to_csv(output_root / "classification_summary.csv", index=False)
         print(
             f"Finished {row['date']}: classified {row['classified_cells']:,}, "
             f"skipped {row['incomplete_candidates']:,}, saved {row['output_path']}",
             flush=True,
         )
     return pd.DataFrame(rows)
+
+
+def classify_date_directories_with_global_ensemble(
+    date_dirs: Sequence[Path], source_root: Path, output_root: Path,
+    artifacts: Sequence[ModelArtifact], models: dict[str, torch.nn.Module],
+    weights: dict[str, float], idx_to_class_code: dict[int, str],
+    batch_size: int, num_workers: int, base_suffix: str, device: torch.device,
+) -> pd.DataFrame:
+    """Global-weighted inference with the existing public API."""
+    return _classify_date_directories_with_weighted_ensemble(
+        date_dirs, source_root, output_root, artifacts, models, weights,
+        idx_to_class_code, batch_size, num_workers, base_suffix, device,
+    )
+
+
+def classify_date_directories_with_class_ensemble(
+    date_dirs: Sequence[Path], source_root: Path, output_root: Path,
+    artifacts: Sequence[ModelArtifact], models: dict[str, torch.nn.Module],
+    weights: dict[str, np.ndarray], idx_to_class_code: dict[int, str],
+    batch_size: int, num_workers: int, base_suffix: str, device: torch.device,
+) -> pd.DataFrame:
+    """Class-weighted inference with sequential dates and flushed nohup progress."""
+    return _classify_date_directories_with_weighted_ensemble(
+        date_dirs, source_root, output_root, artifacts, models, weights,
+        idx_to_class_code, batch_size, num_workers, base_suffix, device,
+        class_weighted=True,
+    )
 
 
 def average_probabilities(
