@@ -67,8 +67,9 @@ Splits run once, before the selected channel-dependent jobs.
 The command starts a detached sequential grain-size pipeline. Each notebook
 receives its own debug log and executed notebook. Use BEACH_PYTHON to select
 another interpreter.
-The all/training modes first generate the shared nested cross-validation plan.
-Every model then evaluates five outer folds and fits a separate deployment model.
+The all/training modes first generate the shared five-fold single-validation plan.
+Every configuration uses one training/validation split per outer fold.
+The mean-validation winner is refitted on all labelled data without another search.
 EOF
 }
 

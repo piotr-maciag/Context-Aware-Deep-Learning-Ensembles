@@ -36,7 +36,7 @@ when unset, an individual training or evaluation notebook defaults to
 `RGB_slope_elevation`. Each notebook run processes just one selected setup.
 The batch launchers instead default to running all four setups sequentially.
 
-The ablation preserves the beach-surface survey holdout, grain-size nested
+The ablation preserves the beach-surface survey holdout, grain-size five-fold single-validation
 spatial-group CV, context-radius search, training-only normalization, model
 selection, and ensemble-weight protocols described below. Splits and fold plans
 are shared across setups and generated only once. Running all four setups means
@@ -109,38 +109,54 @@ observation can appear across these split boundaries. The same geographic
 location can still be observed in different surveys; this is not a geographic
 holdout across all dates.
 
-Grain-size evaluation uses **five outer folds and three inner folds**, saved as
-`gs_cv_samples.csv`, `gs_cv_inner_folds.csv`, and `gs_cv_manifest.json`.
+Grain-size evaluation uses **five outer folds and one training/validation split
+per fold**, saved as `gs_cv_samples.csv`, `gs_cv_validation_splits.csv`, and
+`gs_cv_manifest.json`. The old `gs_cv_inner_folds.csv` is historical and unused.
 Each of the 140 cells is in exactly one outer evaluation fold. Same-survey
 cells with intersecting maximum-radius contexts are assigned to the same
 connected spatial group using DBSCAN (Chebyshev distance, `min_samples=1`).
 For maximum radius 3, centres separated by at most 6 cells are linked;
 transitively linked cells remain in the same group, even if their labels differ.
-StratifiedGroupKFold assigns intact groups to outer and inner folds while
+StratifiedGroupKFold assigns intact groups to outer folds and validation holdouts while
 requiring all three classes in every training and evaluation partition.
 
 There are 129 groups in the current annotations; outer evaluation fold sizes
-are 30, 27, 27, 29, and 27 cells. Inner folds are formed only from the corresponding
-outer-training groups. Both levels apply a training buffer excluding centres
+are 30, 27, 27, 29, and 27 cells. Each remaining outer-training partition is split
+once into training and approximately 20% validation, retaining all classes.
+These holdouts are not rotated as inner cross-validation. All boundaries apply
+a training buffer excluding centres
 at distance <= 6 from a same-survey held-out centre and verify zero context
 intersection. The connected-group construction already separates all current
 groups by more than 6 cells, so the buffer checks do not discard any additional
 current annotations. This common maximum-radius separation is used for all
 tested radii `[0, 1, 2, 3]`; a larger grid radius requires regenerating the plan.
 
-Configuration selection uses mean inner-validation macro F1. Inner validation loss controls early stopping;
-the median best epoch of the selected configuration determines the fixed refit
-length on the corresponding outer-training cells. Outer labels never control selection,
-normalization, early stopping, or ensemble weights. The same folds serve every
+Each of the 16 configurations is fitted once per fold and scored separately on
+validation and outer test cells. Validation loss controls early stopping.
+Mean validation macro F1 across five runs selects one global configuration;
+its median best epoch determines the fixed all-data refit length. Test labels
+never directly control selection, normalization, stopping or ensemble weights.
+The same folds serve every
 model. This is **spatial-group CV with same-survey context isolation**, not
 survey-held-out validation or geographic isolation across different dates.
 
+**Selection limitation:** this is not nested CV. The global configuration is
+selected across all five validation holdouts, and another run's training or
+validation can include a current run's test cell. Global-winner test summaries
+are therefore not an independent nested-CV estimate. All configurations' fold
+metrics and their means/sample standard deviations are saved, with validation
+and test values in separate columns.
+
 For each ensemble outer fold, weights are calculated from the selected
-backbones' inner out-of-fold probabilities on that fold's training cells.
+backbones' single-split validation probabilities for that fold.
 Hard voting resolves ties using mean probabilities among tied classes.
 The outer-held-out predictions evaluate all four ensemble rules independently.
-Separate three-fold inner CV on all labelled cells selects deployment models
-and deployment ensemble weights; these are not evaluated on their training data.
+The selected configuration is freshly trained on all labelled cells, without
+another deployment search. No fold checkpoints are saved. Deployment ensemble
+weights use pooled validation predictions of the selected configurations across
+the five runs; cells can recur in that pool. They never use test labels directly.
+With five backbones, four channel setups and 16 configurations, this is
+`5 * 4 * (5 * 16 + 1) = 1,620` fits, instead of 5,880.
 The old `gs_*_split.csv` files are retained only as historical metadata and are
 not consumed by current training, evaluation, or grain-size violin notebooks.
 No split/fold notebook copies matrix files.
@@ -194,7 +210,7 @@ notebooks use the `gs_` prefix, beginning with
 
 Beach-surface training performs grid search with two validation surveys
 and evaluates once on the three-survey test holdout. Grain-size training performs
-nested CV and separately fits a final deployment model. Both save checkpoints
+five-fold single-validation evaluation and refits the mean-validation winner on all data. Both save checkpoints
 and inference metadata. Statistics are fitted independently on each fit's
 training cells, using central-cell pixels only, and shared across context radii
 within that fit. Missing neighbors always come from the same survey date and
@@ -274,7 +290,7 @@ ensemble. Explicit jobs run in the supplied order within each setup and reuse
 the saved metadata unless `splits` is requested. An explicitly requested
 `splits` job runs once before all setup-dependent jobs, even if repeated or
 listed last. Selecting only `splits` does not run training or evaluation.
-Grain-size nested CV requires many more fits than a single split;
+Grain-size five-fold grid search requires more fits than a single split;
 grid configurations are distributed
 over the dynamically detected CUDA devices. Each notebook can also be executed
 directly with `jupyter nbconvert --execute` and unlimited execution timeout.
@@ -373,17 +389,20 @@ Ensemble directories contain validation-derived weights, predictions,
 classification reports, and confusion matrices.
 
 Grain-size evaluation artifacts are kept in each `Results/gs_<model>/<setup>/`
-directory under `cross_validation/fold_<n>/`. Each fold saves inner grid scores,
-per-class and epoch traces, selected configuration, inner OOF probabilities,
-outer predictions, checkpoint, normalization, metrics, and timing.
-`training_cells.csv`, `evaluation_cells.csv`, and `inner_partition_summary.csv`
+directory under `cross_validation/fold_<n>/`. Each fold saves configuration scores,
+per-class and epoch traces, validation/test predictions for every configuration,
+and metrics/timing. There are no fold model checkpoints.
+`training_cells.csv`, `validation_cells.csv`, `evaluation_cells.csv`, and `partition_summary.csv`
 record the fit membership, fold sizes, and buffer exclusions for auditability.
 `cross_validation/oof_predictions.csv` pools all outer predictions, with one
 prediction per cell. `fold_metrics_and_timing.csv`, `cv_summary.csv` (mean and
 sample standard deviation), `fold_per_class_metrics.csv`,
 `cv_per_class_summary.csv`, and pooled reports provide complementary summaries.
-The model setup directory root contains the separate all-data deployment checkpoint,
-metadata, configuration search, inner OOF predictions, and deployment timings.
+`configuration_fold_metrics.csv`, `configuration_summary.csv`, and
+`configuration_per_class_summary.csv` report every configuration, with separate
+validation/test metrics and mean/SD values. The setup directory root contains
+the all-data deployment checkpoint, metadata, the same averaged configuration
+summary, and deployment timings. `selection.json` records the winner and caveat.
 `Results/gs_ensemble/<setup>/cross_validation/` stores the corresponding results for
 all four ensembles; its root `ensemble_definition.json` contains deployment
 weights compatible with the existing whole-dataset classification notebook.
@@ -391,8 +410,8 @@ weights compatible with the existing whole-dataset classification notebook.
 Timing uses wall-clock seconds with accelerator synchronization. Beach-surface
 models save `timing_summary.csv`; the ensemble also saves
 `test_metrics_and_timing.csv`. Grain-size fold timing separates normalization,
-inner search elapsed time, summed inner fit work, outer refit training, and
-held-out prediction. Training includes forward/backward passes and inner
+single-split search elapsed time, summed configuration fit work, final all-data
+refit training, and held-out prediction. Training includes forward/backward passes and
 validation used by early stopping; prediction includes DataLoader I/O.
 Ensemble prediction time is the sum of component prediction times plus voting;
 ensemble training cost includes the shared backbone training and weight fitting.

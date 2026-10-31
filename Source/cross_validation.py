@@ -1,4 +1,4 @@
-"""Nested spatial-group evaluation with context buffers and deployment fitting."""
+"""Five spatial folds, single validation splits, and all-data deployment fitting."""
 
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
@@ -26,7 +26,7 @@ from Source.timing import elapsed_seconds
 from Source.training import classification_metrics, predict, train_one_epoch
 
 
-PROTOCOL = "nested_spatial_group_cv_v2"
+PROTOCOL = "spatial_five_fold_single_validation_v3"
 ENSEMBLE_METHODS = (
     "hard_voting", "probability_voting", "weighted_probability_per_model",
     "weighted_probability_per_model_class",
@@ -68,7 +68,7 @@ def _check_channel_configuration(metadata, channels, source, *, legacy=False):
 
 
 def fingerprint(frame, columns=None):
-    columns = columns or [c for c in ("date", "cell_id", "class", "spatial_group", "max_context_radius", "outer_fold", "inner_fold") if c in frame]
+    columns = columns or [c for c in ("date", "cell_id", "class", "spatial_group", "max_context_radius", "outer_fold", "split") if c in frame]
     records = frame[columns].astype(str).sort_values(columns).to_dict("records")
     return sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
@@ -143,7 +143,8 @@ def outer_training_frame(samples, outer, max_context_radius):
     return training
 
 
-def create_cv_plan(frame, outer_folds=5, inner_folds=3, random_seed=42, max_context_radius=3):
+def create_cv_plan(frame, outer_folds=5, random_seed=42, max_context_radius=3,
+                   validation_fraction=0.2):
     radius = _validate_radius(max_context_radius)
     samples = frame.drop(columns=["split", "outer_fold", "inner_fold", "spatial_group", "max_context_radius"], errors="ignore").copy()
     for column in ("date", "cell_id", "class"):
@@ -158,28 +159,38 @@ def create_cv_plan(frame, outer_folds=5, inner_folds=3, random_seed=42, max_cont
     samples["outer_fold"] = 0
     for fold, (_, heldout) in enumerate(_grouped_partitions(samples, outer_folds, random_seed, radius), 1):
         samples.loc[heldout, "outer_fold"] = fold
-    inner_rows = []
-    # Fold zero describes the independent, all-labelled-data deployment search.
-    for outer in range(outer_folds + 1):
+    if not 0 < validation_fraction <= 0.5:
+        raise ValueError("validation_fraction must be in (0, 0.5]")
+    validation_rows = []
+    for outer in range(1, outer_folds + 1):
         training = outer_training_frame(samples, outer, radius)
-        for inner, (_, validation) in enumerate(_grouped_partitions(training, inner_folds, random_seed + outer + 1, radius), 1):
-            part = training.iloc[validation][["date", "cell_id", "class", "spatial_group", "max_context_radius"]].copy()
+        # Choose one class-complete grouped holdout, not a rotating inner CV.
+        partitions = _grouped_partitions(training, max(2, round(1 / validation_fraction)),
+                                         random_seed + outer + 1, radius)
+        fit_indices, validation_indices = min(
+            partitions, key=lambda pair: abs(len(pair[1]) / len(training) - validation_fraction)
+        )
+        for split, indices in (("training", fit_indices), ("validation", validation_indices)):
+            part = training.iloc[indices].copy()
             part["outer_fold"] = outer
-            part["inner_fold"] = inner
-            inner_rows.append(part)
-    return samples, pd.concat(inner_rows, ignore_index=True)
+            part["split"] = split
+            validation_rows.append(part)
+    return samples, pd.concat(validation_rows, ignore_index=True)
 
 
 def save_cv_plan(samples, inner, output_dir, random_seed=42):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     samples.to_csv(output_dir / "gs_cv_samples.csv", index=False)
-    inner.to_csv(output_dir / "gs_cv_inner_folds.csv", index=False)
+    inner.to_csv(output_dir / "gs_cv_validation_splits.csv", index=False)
     manifest = {
         "protocol": PROTOCOL, "random_seed": random_seed,
+        # Retain the shared artifact-schema key; it now hashes validation splits, not inner folds.
         "sample_hash": fingerprint(samples), "inner_hash": fingerprint(inner),
         "outer_folds": int(samples.outer_fold.max()),
-        "inner_folds": int(inner.inner_fold.max()),
+        "validation_splits_per_outer_fold": 1,
+        "selection_metric": "mean_validation_macro_f1_across_outer_runs",
+        "evaluation_note": "Global configuration selection across folds is not independent nested CV.",
         "max_context_radius": int(samples.max_context_radius.iloc[0]),
         "buffer_distance_cells": 2 * int(samples.max_context_radius.iloc[0]),
         "grouping": "same_survey_connected_context_components",
@@ -192,11 +203,15 @@ def save_cv_plan(samples, inner, output_dir, random_seed=42):
 def read_cv_plan(directory):
     directory = Path(directory)
     samples = pd.read_csv(directory / "gs_cv_samples.csv", dtype={"date": str, "cell_id": str, "class": str})
-    inner = pd.read_csv(directory / "gs_cv_inner_folds.csv", dtype={"date": str, "cell_id": str, "class": str})
     manifest = json.loads((directory / "gs_cv_manifest.json").read_text())
+    if manifest.get("protocol") != PROTOCOL:
+        raise ValueError("Old CV protocol; regenerate the plan with gs_create_dataset_splits.ipynb")
+    inner = pd.read_csv(directory / "gs_cv_validation_splits.csv", dtype={"date": str, "cell_id": str, "class": str})
     if manifest["protocol"] != PROTOCOL or fingerprint(samples) != manifest["sample_hash"] or fingerprint(inner) != manifest["inner_hash"]:
         raise ValueError("CV manifest does not match samples/folds; regenerate the CV plan")
-    outer_count, inner_count = manifest["outer_folds"], manifest["inner_folds"]
+    outer_count = manifest["outer_folds"]
+    if manifest.get("validation_splits_per_outer_fold") != 1:
+        raise ValueError("Expected one training/validation split per outer fold")
     radius = _validate_radius(manifest["max_context_radius"])
     if (manifest.get("buffer_distance_cells") != 2 * radius
             or manifest.get("grouping") != "same_survey_connected_context_components"
@@ -209,21 +224,20 @@ def read_cv_plan(directory):
         raise ValueError("Invalid outer-fold assignments")
     if not samples.groupby("spatial_group").outer_fold.nunique().eq(1).all():
         raise ValueError("A spatial group crosses outer folds")
-    if set(inner.outer_fold) != set(range(outer_count + 1)):
-        raise ValueError("Missing inner-fold or deployment assignments")
-    for outer in range(outer_count + 1):
+    if set(inner.outer_fold) != set(range(1, outer_count + 1)):
+        raise ValueError("Missing validation split assignments")
+    for outer in range(1, outer_count + 1):
         expected = outer_training_frame(samples, outer, radius)
         current = inner.loc[inner.outer_fold == outer]
-        if not current.groupby("spatial_group").inner_fold.nunique().eq(1).all():
-            raise ValueError(f"A spatial group crosses inner folds for outer fold {outer}")
-        if (set(current.inner_fold) != set(range(1, inner_count + 1))
+        if not current.groupby("spatial_group").split.nunique().eq(1).all():
+            raise ValueError(f"A spatial group crosses training/validation for outer fold {outer}")
+        if (set(current.split) != {"training", "validation"}
                 or current.duplicated(["date", "cell_id"]).any()
                 or fingerprint(current, ["date", "cell_id", "class", "spatial_group", "max_context_radius"]) != fingerprint(expected, ["date", "cell_id", "class", "spatial_group", "max_context_radius"])):
-            raise ValueError(f"Invalid inner partition for outer fold {outer}")
-        for fold in range(1, inner_count + 1):
-            evaluation = current.loc[current.inner_fold == fold]
-            training, _ = buffered_training_partition(current.loc[current.inner_fold != fold], evaluation, radius)
-            _check_partition(training, evaluation, set(samples["class"]), radius)
+            raise ValueError(f"Invalid validation partition for outer fold {outer}")
+        evaluation = current.loc[current.split == "validation"]
+        training, _ = buffered_training_partition(current.loc[current.split == "training"], evaluation, radius)
+        _check_partition(training, evaluation, set(samples["class"]), radius)
     return samples, inner, manifest
 
 
@@ -270,14 +284,14 @@ def _prediction_frame(frame, truth, probabilities, mapping):
     return result
 
 
-def run_nested_cv(
+def run_spatial_cv(
     *, model_factory, parameter_grid, cv_dir, cell_data_root, output_dir,
     model_type, class_name_by_code, image_size=224, model_name=None,
     batch_size=32, num_workers=8, epochs=50, early_stopping_patience=5,
     early_stopping_min_delta=1e-4, augment=True, device=None, random_seed=42,
     feature_suffixes=None, channel_setup=None,
 ):
-    """Fit nested CV and deployment models using the selected, ordered channels.
+    """Evaluate each configuration in five single-split runs, then refit once.
 
     Omitted channels use channel_setup or BEACH_CHANNEL_SETUP. The caller's
     model_factory(config) must use the selected input-channel count. output_dir
@@ -321,39 +335,42 @@ def run_nested_cv(
         return DataLoader(dataset(frame, config, mean, std, training), batch_size=batch_size,
                           shuffle=training, num_workers=num_workers)
 
-    def search(outer, training, destination):
+    def search(outer, destination):
         destination.mkdir(parents=True, exist_ok=True)
-        assignments = inner.loc[inner.outer_fold == outer, ["date", "cell_id", "inner_fold"]]
-        partition = training.merge(assignments, on=["date", "cell_id"], validate="one_to_one")
-        stats, parts, partition_rows = {}, {}, []
+        partition = inner.loc[inner.outer_fold == outer]
+        validation = partition.loc[partition.split == "validation"].reset_index(drop=True)
+        fit, excluded = buffered_training_partition(
+            partition.loc[partition.split == "training"], validation, maximum_radius
+        )
+        fit = fit.reset_index(drop=True)
+        heldout = samples.loc[samples.outer_fold == outer].reset_index(drop=True)
+        _check_partition(fit, validation, set(mapping), maximum_radius)
+        _check_partition(fit, heldout, set(mapping), maximum_radius)
+        _check_partition(validation, heldout, set(mapping), maximum_radius)
+        fit.to_csv(destination / "training_cells.csv", index=False)
+        validation.to_csv(destination / "validation_cells.csv", index=False)
+        heldout.to_csv(destination / "evaluation_cells.csv", index=False)
         with elapsed_seconds(device) as preparation:
-            for fold in sorted(partition.inner_fold.unique()):
-                validation = partition.loc[partition.inner_fold == fold].reset_index(drop=True)
-                fit, excluded = buffered_training_partition(
-                    partition.loc[partition.inner_fold != fold], validation, maximum_radius
-                )
-                fit = fit.reset_index(drop=True)
-                _check_partition(fit, validation, set(mapping), maximum_radius)
-                stats[fold] = compute_channel_stats(fit, cell_data_root,
-                                                   feature_suffixes=feature_suffixes, context_radius=0)
-                parts[fold] = (fit, validation)
-                partition_rows.append({"inner_fold": fold, "training_cells": len(fit),
-                                       "validation_cells": len(validation), "buffer_excluded_cells": len(excluded)})
-        pd.DataFrame(partition_rows).to_csv(destination / "inner_partition_summary.csv", index=False)
+            mean, std = compute_channel_stats(fit, cell_data_root,
+                                               feature_suffixes=feature_suffixes, context_radius=0)
+        pd.DataFrame({"feature": feature_suffixes, "mean": mean, "std": std}).to_csv(
+            destination / "normalization_stats.csv", index=False)
+        pd.DataFrame([{"training_cells": len(fit), "validation_cells": len(validation),
+                       "test_cells": len(heldout), "buffer_excluded_cells": len(excluded)}]).to_csv(
+            destination / "partition_summary.csv", index=False)
         gpu_count = torch.cuda.device_count() if device.type == "cuda" else 0
         devices = [torch.device(f"cuda:{i}") for i in range(gpu_count)] or [device]
         queue = Queue()
         for item in devices:
             queue.put(item)
 
-        def candidate(task):
-            config_index, fold = task
+        def candidate(config_index):
             assigned_device = queue.get()
             try:
-                fit, validation = parts[fold]
-                mean, std = stats[fold]
                 config = grid[config_index]
-                print(f"{model_type}: outer {outer}, inner {fold}, grid {config_index + 1}/{len(grid)} on {assigned_device}", flush=True)
+                target = destination / f"config_{config_index + 1}"
+                target.mkdir(parents=True, exist_ok=True)
+                print(f"{model_type}: fold {outer}, grid {config_index + 1}/{len(grid)} on {assigned_device}", flush=True)
                 result = _run_single_grid_config(
                     run_index=config_index + 1, config=config, model_factory=model_factory,
                     train_loader=loader(fit, config, mean, std, True),
@@ -362,48 +379,52 @@ def run_nested_cv(
                     device=assigned_device, epochs=epochs,
                     early_stopping_patience=early_stopping_patience,
                     early_stopping_min_delta=early_stopping_min_delta,
-                    random_seed=random_seed + 100 * outer + fold, quiet=True,
+                    random_seed=random_seed + 100 * outer, quiet=True,
                 )
-                predicted = _prediction_frame(validation, result["y_true"], result["y_probability"], mapping)
-                history = result["history"].assign(config_index=config_index, inner_fold=fold)
-                row = {**result["summary_row"], "config_index": config_index, "inner_fold": int(fold)}
-                per_class = result["report"].rename_axis("label").reset_index().assign(config_index=config_index, inner_fold=fold)
-                # Inner states are not deployment or evaluation checkpoints.
+                _prediction_frame(validation, result["y_true"], result["y_probability"], mapping).to_csv(
+                    target / "validation_predictions.csv", index=False)
+                model = model_factory(config).to(assigned_device)
+                model.load_state_dict(result["state_dict"])
+                with elapsed_seconds(assigned_device) as test_time:
+                    truth, prediction, probabilities = predict(
+                        model, loader(heldout, config, mean, std), assigned_device, show_progress=False)
+                _prediction_frame(heldout, truth, probabilities, mapping).to_csv(
+                    target / "test_predictions.csv", index=False)
+                report, confusion = classification_metrics(truth, prediction, names)
+                report.to_csv(target / "test_classification_report.csv")
+                confusion.to_csv(target / "test_confusion_matrix.csv")
+                result["report"].to_csv(target / "validation_classification_report.csv")
+                history = result["history"].assign(config_index=config_index, outer_fold=outer)
+                history.to_csv(target / "training_history.csv", index=False)
+                row = {**result["summary_row"], "config_index": config_index, "outer_fold": outer,
+                       "method": model_type, "prediction_seconds": test_time["seconds"],
+                       "preprocessing_seconds": preparation["seconds"],
+                       **{f"validation_{k}": v for k, v in metric_row(
+                           result["y_true"], result["y_probability"].argmax(1), list(range(len(mapping)))).items()},
+                       **{f"test_{k}": v for k, v in metric_row(truth, prediction, list(range(len(mapping)))).items()}}
+                pd.DataFrame([row]).to_csv(target / "metrics_and_timing.csv", index=False)
+                per_class = []
+                for split, current_report in (("validation", result["report"]), ("test", report)):
+                    per_class.extend({**item, "split": split, "config_index": config_index}
+                                     for item in _class_metrics(current_report, names, outer, model_type))
+                del model
                 del result
-                print(f"Finished {model_type} outer {outer}, inner {fold}, grid {config_index + 1}: F1={row['validation_macro_f1']:.4f}", flush=True)
-                return row, predicted, history, per_class
+                print(f"Finished {model_type} fold {outer}, grid {config_index + 1}: validation F1={row['validation_macro_f1']:.4f}", flush=True)
+                return row, history, per_class
             finally:
                 queue.put(assigned_device)
 
-        tasks = [(i, fold) for i in range(len(grid)) for fold in parts]
         with elapsed_seconds(device) as search_time:
             with ThreadPoolExecutor(max_workers=len(devices)) as pool:
-                results = list(pool.map(candidate, tasks))
+                results = list(pool.map(candidate, range(len(grid))))
         trace = pd.DataFrame([r[0] for r in results])
-        trace.to_csv(destination / "inner_grid_search_trace.csv", index=False)
-        pd.concat([r[2] for r in results], ignore_index=True).to_csv(destination / "inner_epoch_trace.csv", index=False)
-        pd.concat([r[3] for r in results], ignore_index=True).to_csv(destination / "inner_classification_metric_trace.csv", index=False)
-        means = trace.groupby("config_index", sort=True).validation_macro_f1.mean()
-        selected = int(means.idxmax())
-        best_config = grid[selected].copy()
-        selected_trace = trace.loc[trace.config_index == selected]
-        refit_epochs = max(1, int(np.rint(selected_trace.best_epoch.median())))
-        oof = pd.concat([r[1] for r in results if r[0]["config_index"] == selected], ignore_index=True)
-        oof = oof.sort_values(["date", "cell_id"]).reset_index(drop=True)
-        oof.to_csv(destination / "inner_oof_predictions.csv", index=False)
-        summary = pd.DataFrame([{**config, "config_index": i,
-                                "validation_macro_f1": float(means.loc[i]),
-                                "training_seconds": float(trace.loc[trace.config_index == i, "training_seconds"].sum())}
-                               for i, config in enumerate(grid)]).sort_values("validation_macro_f1", ascending=False, kind="stable")
-        summary.to_csv(destination / "grid_search_summary.csv", index=False)
-        summary.head(1).to_csv(destination / "best_grid_search_result.csv", index=False)
-        write_json(destination / "best_config.json", best_config)
-        return best_config, refit_epochs, oof, summary, {
-            "search_wall_seconds": search_time["seconds"],
-            "inner_training_seconds": float(trace.training_seconds.sum()),
-            "inner_prediction_seconds": float(trace.validation_prediction_seconds.sum()),
-            "inner_preprocessing_seconds": preparation["seconds"],
-        }
+        trace.to_csv(destination / "grid_search_trace.csv", index=False)
+        pd.concat([r[1] for r in results], ignore_index=True).to_csv(destination / "epoch_trace.csv", index=False)
+        pd.DataFrame([item for r in results for item in r[2]]).to_csv(destination / "per_class_configuration_metrics.csv", index=False)
+        write_json(destination / "search_timing.json", {"search_wall_seconds": search_time["seconds"],
+                   "training_work_seconds": float(trace.training_seconds.sum()),
+                   "preprocessing_seconds": preparation["seconds"]})
+        return trace
 
     def refit(training, config, refit_epochs, destination, outer):
         destination.mkdir(parents=True, exist_ok=True)
@@ -449,38 +470,57 @@ def run_nested_cv(
         pd.DataFrame({"feature": feature_suffixes, "mean": mean, "std": std}).to_csv(destination / "normalization_stats.csv", index=False)
         return model, mean, std, fitting["seconds"], preparation["seconds"]
 
+    traces = [search(outer, cv_root / f"fold_{outer}")
+              for outer in range(1, manifest["outer_folds"] + 1)]
+    trace = pd.concat(traces, ignore_index=True)
+    trace.to_csv(cv_root / "configuration_fold_metrics.csv", index=False)
+    metric_columns = [c for c in trace if c.startswith(("validation_", "test_"))
+                      or c.endswith("_seconds")]
+    averages = trace.groupby("config_index", sort=True)[metric_columns].agg(["mean", "std"])
+    averages.columns = [f"{metric}_{stat}" for metric, stat in averages.columns]
+    summary = pd.DataFrame([{**config, "config_index": i} for i, config in enumerate(grid)]).merge(
+        averages.reset_index(), on="config_index", validate="one_to_one")
+    summary = summary.sort_values("validation_macro_f1_mean", ascending=False, kind="stable")
+    selected = int(summary.iloc[0].config_index)
+    summary["validation_macro_f1"] = summary["validation_macro_f1_mean"]
+    summary["selected_for_deployment"] = summary.config_index == selected
+    summary.to_csv(cv_root / "configuration_summary.csv", index=False)
+    summary.to_csv(output_dir / "grid_search_summary.csv", index=False)
+    summary.head(1).to_csv(output_dir / "best_grid_search_result.csv", index=False)
+    config = grid[selected].copy()
+    count = max(1, int(np.rint(trace.loc[trace.config_index == selected, "best_epoch"].median())))
+    write_json(output_dir / "best_config.json", config)
+    write_json(cv_root / "selection.json", {"config_index": selected, "best_config": config,
+               "selection_metric": "mean_validation_macro_f1", "refit_epochs": count,
+               "evaluation_note": manifest["evaluation_note"]})
+    all_class_metrics = pd.concat([
+        pd.read_csv(cv_root / f"fold_{outer}" / "per_class_configuration_metrics.csv")
+        for outer in range(1, manifest["outer_folds"] + 1)], ignore_index=True)
+    all_class_metrics.to_csv(cv_root / "configuration_fold_per_class_metrics.csv", index=False)
+    all_class_metrics.groupby(["config_index", "split", "class_index", "class_name"])[
+        ["precision", "recall", "f1"]].agg(["mean", "std"]).to_csv(
+            cv_root / "configuration_per_class_summary.csv")
+    # No fold checkpoint is retained: reuse cached predictions for the global winner.
     for outer in range(1, manifest["outer_folds"] + 1):
         destination = cv_root / f"fold_{outer}"
-        training = outer_training_frame(samples, outer, maximum_radius).reset_index(drop=True)
-        heldout = samples.loc[samples.outer_fold == outer].reset_index(drop=True)
-        destination.mkdir(parents=True, exist_ok=True)
-        training.to_csv(destination / "training_cells.csv", index=False)
-        heldout.to_csv(destination / "evaluation_cells.csv", index=False)
-        config, count, _, _, times = search(outer, training, destination)
-        model, mean, std, fitting, preparation = refit(training, config, count, destination, outer)
-        with elapsed_seconds(device) as prediction_time:
-            truth, prediction, probabilities = predict(model, loader(heldout, config, mean, std), device, show_progress=False)
-        result = _prediction_frame(heldout, truth, probabilities, mapping)
+        candidate_dir = destination / f"config_{selected + 1}"
+        result = pd.read_csv(candidate_dir / "test_predictions.csv", dtype={"date": str, "cell_id": str,
+                              "class": str, "true_class_code": str, "predicted_class_code": str})
         result.to_csv(destination / "outer_predictions.csv", index=False)
-        report, confusion = classification_metrics(truth, prediction, names)
+        heldout_frames.append(result)
+        validation_predictions = pd.read_csv(candidate_dir / "validation_predictions.csv", dtype=str)
+        validation_predictions.to_csv(destination / "validation_predictions.csv", index=False)
+        row = trace.loc[(trace.outer_fold == outer) & (trace.config_index == selected)].iloc[0].to_dict()
+        row["selected_configuration_training_seconds"] = row["training_seconds"]
+        row["training_seconds"] = float(trace.loc[trace.outer_fold == outer, "training_seconds"].sum())
+        row.update({k: row[f"test_{k}"] for k in ("accuracy", "macro_precision", "macro_recall", "macro_f1", "mcc")})
+        fold_rows.append(row)
+        pd.DataFrame([row]).to_csv(destination / "metrics_and_timing.csv", index=False)
+        report, confusion = classification_metrics(result.true_class_code.map(mapping).to_numpy(),
+            result.predicted_class_code.map(mapping).to_numpy(), names)
         report.to_csv(destination / "outer_classification_report.csv")
         confusion.to_csv(destination / "outer_confusion_matrix.csv")
         class_rows.extend(_class_metrics(report, names, outer, model_type))
-        heldout_frames.append(result)
-        row = {"method": model_type, "outer_fold": outer, **metric_row(truth, prediction, list(range(len(mapping)))),
-               **times, "refit_training_seconds": fitting,
-               "training_seconds": times["inner_training_seconds"] + fitting,
-               "preprocessing_seconds": times["inner_preprocessing_seconds"] + preparation,
-               "prediction_seconds": prediction_time["seconds"], "refit_epochs": count,
-               "training_cells": len(training), "evaluation_cells": len(heldout),
-               "buffer_excluded_cells": int((samples.outer_fold != outer).sum()) - len(training),
-               "context_radius": config["context_radius"]}
-        fold_rows.append(row)
-        pd.DataFrame([row]).to_csv(destination / "metrics_and_timing.csv", index=False)
-        print(f"Completed {model_type} outer fold {outer}: F1={row['macro_f1']:.4f}, prediction={row['prediction_seconds']:.2f}s", flush=True)
-        del model
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
 
     oof = pd.concat(heldout_frames, ignore_index=True).sort_values(["date", "cell_id"]).reset_index(drop=True)
     oof.to_csv(cv_root / "oof_predictions.csv", index=False)
@@ -495,17 +535,17 @@ def run_nested_cv(
     summarize_folds(folds).to_csv(cv_root / "cv_summary.csv", index=False)
     pd.DataFrame([metric_row(truth, prediction, list(range(len(mapping))))]).to_csv(cv_root / "pooled_oof_metrics.csv", index=False)
 
-    print(f"{model_type}: selecting and fitting separate all-data deployment model", flush=True)
-    config, count, _, summary, times = search(0, samples, output_dir)
+    print(f"{model_type}: fitting selected mean-validation winner on all {len(samples)} cells; no deployment search", flush=True)
     model, _, _, fitting, preparation = refit(samples, config, count, output_dir, 0)
     del model
-    write_json(output_dir / "deployment_timing.json", {**times, "refit_training_seconds": fitting,
-               "preprocessing_seconds": times["inner_preprocessing_seconds"] + preparation})
+    write_json(output_dir / "deployment_timing.json", {"refit_training_seconds": fitting,
+               "preprocessing_seconds": preparation, "deployment_search_seconds": 0.0})
     write_json(cv_root / "completed.json", experiment)
     return {"fold_metrics": folds, "summary": summarize_folds(folds), "oof_predictions": oof,
             "per_class_fold_metrics": class_folds,
             "classification_report": report, "confusion_matrix": confusion,
-            "deployment_configuration": summary.head(1)}
+            "deployment_configuration": summary.head(1), "configuration_summary": summary,
+            "configuration_fold_metrics": trace}
 
 
 def _aligned_probabilities(path, expected, class_codes):
@@ -522,9 +562,9 @@ def _aligned_probabilities(path, expected, class_codes):
     return probabilities
 
 
-def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_name_by_code,
+def evaluate_spatial_ensembles(*, cv_dir, model_result_dirs, output_dir, class_name_by_code,
                               feature_suffixes=None, channel_setup=None):
-    """Combine matching-channel models; weights use only inner OOF labels.
+    """Combine matching-channel winners; weights use validation predictions only.
 
     Omitted channels/setup are inferred from the first deployment artifact.
     All directory arguments are used as supplied.
@@ -535,7 +575,7 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
                 if feature_suffixes is not None or channel_setup is not None else None)
     if len(model_result_dirs) < 2 or "small_cnn" in model_result_dirs:
         raise ValueError("Ensembles require at least two pretrained backbones; Small CNN is a baseline")
-    samples, _, manifest = read_cv_plan(cv_dir)
+    samples, validation_splits, manifest = read_cv_plan(cv_dir)
     mapping = make_class_mapping(samples)
     codes = list(mapping)
     reverse = {v: k for k, v in mapping.items()}
@@ -567,12 +607,19 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
         metadata_hashes[name] = sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
 
     def weights(outer):
-        training = outer_training_frame(samples, outer, manifest["max_context_radius"])
-        probabilities = {}
-        for name, directory in model_result_dirs.items():
-            parent = Path(directory) if outer == 0 else Path(directory) / "cross_validation" / f"fold_{outer}"
-            probabilities[name] = _aligned_probabilities(parent / "inner_oof_predictions.csv", training, codes)
-        truth = training["class"].map(mapping).to_numpy()
+        folds = range(1, manifest["outer_folds"] + 1) if outer == 0 else [outer]
+        probability_parts = {name: [] for name in model_result_dirs}
+        truths = []
+        for fold in folds:
+            validation = validation_splits.loc[(validation_splits.outer_fold == fold)
+                                               & (validation_splits.split == "validation")]
+            truths.append(validation["class"].map(mapping).to_numpy())
+            for name, directory in model_result_dirs.items():
+                parent = Path(directory) / "cross_validation" / f"fold_{fold}"
+                probability_parts[name].append(_aligned_probabilities(
+                    parent / "validation_predictions.csv", validation, codes))
+        probabilities = {name: np.concatenate(parts) for name, parts in probability_parts.items()}
+        truth = np.concatenate(truths)
         started = perf_counter()
         scores, global_weights = macro_f1_weights(truth, probabilities)
         global_seconds = perf_counter() - started
@@ -590,7 +637,7 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
         write_json(destination / "weights.json", {
             "global_model_weights": global_weights,
             "weights_by_model_and_class": {name: dict(zip(codes, values.tolist())) for name, values in by_class.items()},
-            "source": "inner_out_of_fold_predictions_only",
+            "source": "single_validation_split_predictions_only",
         })
         heldout = samples.loc[samples.outer_fold == outer].reset_index(drop=True)
         probabilities, component_times = {}, []
@@ -651,7 +698,8 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
         "cv_inner_hash": manifest["inner_hash"],
         "max_context_radius": manifest["max_context_radius"],
         "buffer_distance_cells": manifest["buffer_distance_cells"],
-        "selection_metric": "deployment_inner_oof_macro_f1",
+        "selection_metric": "mean_validation_macro_f1_across_outer_runs",
+        "evaluation_note": manifest["evaluation_note"],
         "candidate_methods": list(ENSEMBLE_METHODS),
         "global_model_weights": global_weights, "validation_model_macro_f1": scores,
         "weights_by_model_and_class": {name: dict(zip(codes, values.tolist())) for name, values in by_class.items()},
@@ -663,7 +711,7 @@ def evaluate_nested_ensembles(*, cv_dir, model_result_dirs, output_dir, class_na
                    for name, directory in model_result_dirs.items()},
         "weight_fitting_seconds": fitting,
         "deployment_model_metadata_hashes": metadata_hashes,
-        "weight_source": "all_data_deployment_inner_oof_not_outer_evaluation_predictions",
+        "weight_source": "pooled_single_split_validation_predictions_for_global_winners_not_test_labels",
     }
     write_json(output_dir / "ensemble_definition.json", definition)
     write_json(cv_root / "completed.json", {**manifest, **channels, "models": experiments})

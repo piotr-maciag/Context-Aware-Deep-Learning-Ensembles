@@ -44,10 +44,10 @@ def load_model_artifact(
     with metadata_path.open("r", encoding="utf-8") as file:
         metadata = json.load(file)
     metadata.setdefault("model_type", name)
-    if metadata.get("protocol") in ("nested_stratified_cell_cv_v1", "nested_spatial_group_cv_v2"):
+    if metadata.get("protocol") in ("nested_stratified_cell_cv_v1", "nested_spatial_group_cv_v2", "spatial_five_fold_single_validation_v3"):
         completion_path = result_dir / "cross_validation" / "completed.json"
         if not completion_path.exists():
-            raise ValueError(f"{name}: grain-size experiment is incomplete; finish nested CV and deployment fitting")
+            raise ValueError(f"{name}: grain-size experiment is incomplete; finish CV and deployment fitting")
         completion = json.loads(completion_path.read_text())
         if metadata.get("purpose") != "deployment" or metadata.get("run_id") != completion.get("run_id"):
             raise ValueError(f"{name}: deployment model does not match its completed grain-size experiment")
@@ -210,7 +210,7 @@ def _load_ensemble_definition(artifacts, definition_path):
             if artifact.metadata.get("split_provenance") != definition["split_provenance"]:
                 raise ValueError(f"{artifact.name}: model and ensemble use different dataset splits")
 
-    grain_size_cv = definition.get("protocol") in ("nested_stratified_cell_cv_v1", "nested_spatial_group_cv_v2")
+    grain_size_cv = definition.get("protocol") in ("nested_stratified_cell_cv_v1", "nested_spatial_group_cv_v2", "spatial_five_fold_single_validation_v3")
     if grain_size_cv and not (definition_path.parent / "cross_validation" / "completed.json").exists():
         raise ValueError("Grain-size ensemble evaluation is incomplete; rerun it to completion")
     expected_hashes = definition.get("deployment_model_metadata_hashes")
