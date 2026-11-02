@@ -1,0 +1,4 @@
+,11: fine,12: medium,13: coarse
+11: fine,1,3,0
+12: medium,0,11,1
+13: coarse,0,2,9

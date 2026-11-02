@@ -1,0 +1,60 @@
+{
+  "model_type": "convnext_tiny",
+  "checkpoint_filename": "convnext_tiny_best.pt",
+  "checkpoint_sha256": "9be93c1e7c8e7cffc83ddd502601da12f2d18e241a01b4fdb813ff06fb88b65d",
+  "image_size": 224,
+  "context_radius": 0,
+  "context_window_size": 1,
+  "channel_setup": "RGB_elevation",
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b",
+    "d"
+  ],
+  "in_channels": 4,
+  "num_classes": 3,
+  "class_to_idx": {
+    "11": 0,
+    "12": 1,
+    "13": 2
+  },
+  "idx_to_class_code": {
+    "0": "11",
+    "1": "12",
+    "2": "13"
+  },
+  "class_name_by_code": {
+    "11": "fine",
+    "12": "medium",
+    "13": "coarse"
+  },
+  "best_config": {
+    "learning_rate": 3e-05,
+    "weight_decay": 0.0001,
+    "pretrained": true,
+    "context_radius": 0
+  },
+  "channel_mean": [
+    161.56846618652344,
+    169.3380889892578,
+    179.701171875,
+    1.054457426071167
+  ],
+  "channel_std": [
+    29.025819778442383,
+    30.579315185546875,
+    31.270917892456055,
+    0.7290998101234436
+  ],
+  "protocol": "spatial_five_fold_single_validation_v3",
+  "outer_fold": 0,
+  "cv_sample_hash": "dab89dee5c321faf160e34cb37ce7f4f91c017c8f0814552871ae6309e9b52f4",
+  "max_context_radius": 3,
+  "buffer_distance_cells": 6,
+  "run_id": "6aadf2cde4b44022af7046c03bb5d1ea",
+  "cv_inner_hash": "332673c7c37f88caf0856263fa78b63bf9da9bdc022c7e28fb41421a71b2ee8c",
+  "refit_epochs": 10,
+  "training_sample_hash": "4e7507de521ed61b0b01d61ba9ab6a4c3e28f774c62c6aa69eb2204f3c60a01c",
+  "purpose": "deployment"
+}

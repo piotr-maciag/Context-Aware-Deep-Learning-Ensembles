@@ -1,0 +1,122 @@
+{
+  "protocol": "spatial_five_fold_single_validation_v3",
+  "channel_setup": "RGB_elevation",
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b",
+    "d"
+  ],
+  "in_channels": 4,
+  "cv_sample_hash": "dab89dee5c321faf160e34cb37ce7f4f91c017c8f0814552871ae6309e9b52f4",
+  "cv_inner_hash": "332673c7c37f88caf0856263fa78b63bf9da9bdc022c7e28fb41421a71b2ee8c",
+  "max_context_radius": 3,
+  "buffer_distance_cells": 6,
+  "selection_metric": "mean_validation_macro_f1_across_outer_runs",
+  "evaluation_note": "Global configuration selection across folds is not independent nested CV.",
+  "candidate_methods": [
+    "hard_voting",
+    "probability_voting",
+    "weighted_probability_per_model",
+    "weighted_probability_per_model_class"
+  ],
+  "global_model_weights": {
+    "convnext_tiny": 0.2754646407935723,
+    "vit_tiny": 0.2541312613567684,
+    "swin_tiny": 0.2564207653084303,
+    "efficientnetv2_s": 0.21398333254122898
+  },
+  "validation_model_macro_f1": {
+    "convnext_tiny": 0.8306225971434352,
+    "vit_tiny": 0.7662949688039293,
+    "swin_tiny": 0.7731986269758856,
+    "efficientnetv2_s": 0.6452348690153569
+  },
+  "weights_by_model_and_class": {
+    "convnext_tiny": {
+      "11": 0.29929400406299655,
+      "12": 0.2615154430685112,
+      "13": 0.2653528355627414
+    },
+    "vit_tiny": {
+      "11": 0.25488263571816483,
+      "12": 0.25067950225618174,
+      "13": 0.2568738778541281
+    },
+    "swin_tiny": {
+      "11": 0.2674940161313032,
+      "12": 0.25302230134268805,
+      "13": 0.24858762372980134
+    },
+    "efficientnetv2_s": {
+      "11": 0.17832934408753545,
+      "12": 0.23478275333261897,
+      "13": 0.22918566285332906
+    }
+  },
+  "validation_f1_by_model_and_class": {
+    "convnext_tiny": {
+      "11": 0.9090909090909091,
+      "12": 0.7920792079207921,
+      "13": 0.7906976744186046
+    },
+    "vit_tiny": {
+      "11": 0.7741935483870968,
+      "12": 0.7592592592592593,
+      "13": 0.7654320987654321
+    },
+    "swin_tiny": {
+      "11": 0.8125,
+      "12": 0.7663551401869159,
+      "13": 0.7407407407407407
+    },
+    "efficientnetv2_s": {
+      "11": 0.5416666666666666,
+      "12": 0.7111111111111111,
+      "13": 0.6829268292682927
+    }
+  },
+  "class_to_idx": {
+    "11": 0,
+    "12": 1,
+    "13": 2
+  },
+  "idx_to_class_code": {
+    "0": "11",
+    "1": "12",
+    "2": "13"
+  },
+  "models": {
+    "convnext_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_elevation/convnext_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_elevation/inference_metadata.json"
+    },
+    "vit_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_elevation/vit_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_elevation/inference_metadata.json"
+    },
+    "swin_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_elevation/swin_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_elevation/inference_metadata.json"
+    },
+    "efficientnetv2_s": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_elevation/efficientnetv2_s_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_elevation/inference_metadata.json"
+    }
+  },
+  "weight_fitting_seconds": {
+    "weighted_probability_per_model": 0.008746543026063591,
+    "weighted_probability_per_model_class": 0.007621782016940415
+  },
+  "deployment_model_metadata_hashes": {
+    "convnext_tiny": "2ffc66aa1ef9f6db24e8d250ad5977758b87ebbf3c04a6c456e5bf3eace0c34f",
+    "vit_tiny": "5f0f12c89f2ab89a3eae69c8b227d98159dfbeec22e5291560c84e30a23fe26e",
+    "swin_tiny": "157c354a13d0baf21ae910f1b5e7b14ee6685370f5ad41551a3760c702df2aec",
+    "efficientnetv2_s": "7314cfb22c1f3a61f040cf0ebeb959c02c3f0a790f1cb64927dc99e00d60a28c"
+  },
+  "weight_source": "pooled_single_split_validation_predictions_for_global_winners_not_test_labels"
+}

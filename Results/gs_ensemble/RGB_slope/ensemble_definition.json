@@ -1,0 +1,122 @@
+{
+  "protocol": "spatial_five_fold_single_validation_v3",
+  "channel_setup": "RGB_slope",
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b",
+    "s"
+  ],
+  "in_channels": 4,
+  "cv_sample_hash": "dab89dee5c321faf160e34cb37ce7f4f91c017c8f0814552871ae6309e9b52f4",
+  "cv_inner_hash": "332673c7c37f88caf0856263fa78b63bf9da9bdc022c7e28fb41421a71b2ee8c",
+  "max_context_radius": 3,
+  "buffer_distance_cells": 6,
+  "selection_metric": "mean_validation_macro_f1_across_outer_runs",
+  "evaluation_note": "Global configuration selection across folds is not independent nested CV.",
+  "candidate_methods": [
+    "hard_voting",
+    "probability_voting",
+    "weighted_probability_per_model",
+    "weighted_probability_per_model_class"
+  ],
+  "global_model_weights": {
+    "convnext_tiny": 0.26100480229327183,
+    "vit_tiny": 0.2544967235903452,
+    "swin_tiny": 0.25849160855060943,
+    "efficientnetv2_s": 0.22600686556577357
+  },
+  "validation_model_macro_f1": {
+    "convnext_tiny": 0.8014892335280684,
+    "vit_tiny": 0.7815043329993495,
+    "swin_tiny": 0.7937717597160322,
+    "efficientnetv2_s": 0.6940181477996604
+  },
+  "weights_by_model_and_class": {
+    "convnext_tiny": {
+      "11": 0.264127878765257,
+      "12": 0.26397692074741924,
+      "13": 0.25436211120570024
+    },
+    "vit_tiny": {
+      "11": 0.2582583703482513,
+      "12": 0.2561031978365857,
+      "13": 0.2484467132706839
+    },
+    "swin_tiny": {
+      "11": 0.27345003919226607,
+      "12": 0.24515861673245812,
+      "13": 0.2539302570270827
+    },
+    "efficientnetv2_s": {
+      "11": 0.2041637116942257,
+      "12": 0.23476126468353686,
+      "13": 0.24326091849653306
+    }
+  },
+  "validation_f1_by_model_and_class": {
+    "convnext_tiny": {
+      "11": 0.9090909090909091,
+      "12": 0.7572815533980582,
+      "13": 0.7380952380952381
+    },
+    "vit_tiny": {
+      "11": 0.8888888888888888,
+      "12": 0.7346938775510204,
+      "13": 0.7209302325581395
+    },
+    "swin_tiny": {
+      "11": 0.9411764705882353,
+      "12": 0.7032967032967034,
+      "13": 0.7368421052631579
+    },
+    "efficientnetv2_s": {
+      "11": 0.7027027027027027,
+      "12": 0.673469387755102,
+      "13": 0.7058823529411765
+    }
+  },
+  "class_to_idx": {
+    "11": 0,
+    "12": 1,
+    "13": 2
+  },
+  "idx_to_class_code": {
+    "0": "11",
+    "1": "12",
+    "2": "13"
+  },
+  "models": {
+    "convnext_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_slope",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_slope/convnext_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_slope/inference_metadata.json"
+    },
+    "vit_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_slope",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_slope/vit_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_slope/inference_metadata.json"
+    },
+    "swin_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_slope",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_slope/swin_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_slope/inference_metadata.json"
+    },
+    "efficientnetv2_s": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_slope",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_slope/efficientnetv2_s_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_slope/inference_metadata.json"
+    }
+  },
+  "weight_fitting_seconds": {
+    "weighted_probability_per_model": 0.008656546997372061,
+    "weighted_probability_per_model_class": 0.007649892009794712
+  },
+  "deployment_model_metadata_hashes": {
+    "convnext_tiny": "e2229d25211f1ecf75bbaace74eca6eaebebd96f5f285770ba506363c7dcb314",
+    "vit_tiny": "55e24568c6fa886dc675e1fb0d4e2d02dd10dd97d93a965ddb837f289f893789",
+    "swin_tiny": "b17496dbea4b28e80bc3212a5e93d1b7f2e40ee2c81966067d023bacaa92f481",
+    "efficientnetv2_s": "2521fe5f91f54f6cd197469de313d3ba8c0e9d1fd99a35101b083420485ad5ab"
+  },
+  "weight_source": "pooled_single_split_validation_predictions_for_global_winners_not_test_labels"
+}

@@ -1,0 +1,16 @@
+method,outer_fold,class_index,class_name,precision,recall,f1
+small_cnn,1,0,11: fine,0.0,0.0,0.0
+small_cnn,1,1,12: medium,0.4666666666666667,1.0,0.6363636363636364
+small_cnn,1,2,13: coarse,0.0,0.0,0.0
+small_cnn,2,0,11: fine,0.0,0.0,0.0
+small_cnn,2,1,12: medium,0.0,0.0,0.0
+small_cnn,2,2,13: coarse,0.4074074074074074,1.0,0.5789473684210527
+small_cnn,3,0,11: fine,0.4,1.0,0.5714285714285714
+small_cnn,3,1,12: medium,0.8571428571428571,0.5,0.631578947368421
+small_cnn,3,2,13: coarse,0.8,0.7272727272727273,0.7619047619047619
+small_cnn,4,0,11: fine,0.0,0.0,0.0
+small_cnn,4,1,12: medium,0.4482758620689655,1.0,0.6190476190476191
+small_cnn,4,2,13: coarse,0.0,0.0,0.0
+small_cnn,5,0,11: fine,0.6666666666666666,1.0,0.8
+small_cnn,5,1,12: medium,0.75,0.6923076923076923,0.72
+small_cnn,5,2,13: coarse,0.7777777777777778,0.7,0.7368421052631579

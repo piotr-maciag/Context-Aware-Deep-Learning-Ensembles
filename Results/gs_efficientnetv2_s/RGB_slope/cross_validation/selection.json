@@ -1,0 +1,13 @@
+{
+  "config_index": 10,
+  "best_config": {
+    "learning_rate": 0.0001,
+    "weight_decay": 0.001,
+    "dropout": 0.3,
+    "pretrained": true,
+    "context_radius": 2
+  },
+  "selection_metric": "mean_validation_macro_f1",
+  "refit_epochs": 9,
+  "evaluation_note": "Global configuration selection across folds is not independent nested CV."
+}

@@ -1,0 +1,123 @@
+{
+  "protocol": "spatial_five_fold_single_validation_v3",
+  "channel_setup": "RGB_slope_elevation",
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b",
+    "s",
+    "d"
+  ],
+  "in_channels": 5,
+  "cv_sample_hash": "dab89dee5c321faf160e34cb37ce7f4f91c017c8f0814552871ae6309e9b52f4",
+  "cv_inner_hash": "332673c7c37f88caf0856263fa78b63bf9da9bdc022c7e28fb41421a71b2ee8c",
+  "max_context_radius": 3,
+  "buffer_distance_cells": 6,
+  "selection_metric": "mean_validation_macro_f1_across_outer_runs",
+  "evaluation_note": "Global configuration selection across folds is not independent nested CV.",
+  "candidate_methods": [
+    "hard_voting",
+    "probability_voting",
+    "weighted_probability_per_model",
+    "weighted_probability_per_model_class"
+  ],
+  "global_model_weights": {
+    "convnext_tiny": 0.2553154681424597,
+    "vit_tiny": 0.2346625735780565,
+    "swin_tiny": 0.2577557213912092,
+    "efficientnetv2_s": 0.25226623688827454
+  },
+  "validation_model_macro_f1": {
+    "convnext_tiny": 0.78056410292192,
+    "vit_tiny": 0.7174229691876751,
+    "swin_tiny": 0.7880245756534415,
+    "efficientnetv2_s": 0.7712418300653594
+  },
+  "weights_by_model_and_class": {
+    "convnext_tiny": {
+      "11": 0.24653723215342724,
+      "12": 0.2681695939689425,
+      "13": 0.2529276252639662
+    },
+    "vit_tiny": {
+      "11": 0.2158458624363679,
+      "12": 0.23612676556137144,
+      "13": 0.25590324438471873
+    },
+    "swin_tiny": {
+      "11": 0.26414703445010057,
+      "12": 0.2505893509596119,
+      "13": 0.2572790682792602
+    },
+    "efficientnetv2_s": {
+      "11": 0.27346987096010417,
+      "12": 0.24511428951007416,
+      "13": 0.23389006207205476
+    }
+  },
+  "validation_f1_by_model_and_class": {
+    "convnext_tiny": {
+      "11": 0.8484848484848485,
+      "12": 0.7722772277227723,
+      "13": 0.7209302325581395
+    },
+    "vit_tiny": {
+      "11": 0.7428571428571429,
+      "12": 0.68,
+      "13": 0.7294117647058823
+    },
+    "swin_tiny": {
+      "11": 0.9090909090909091,
+      "12": 0.7216494845360825,
+      "13": 0.7333333333333333
+    },
+    "efficientnetv2_s": {
+      "11": 0.9411764705882353,
+      "12": 0.7058823529411765,
+      "13": 0.6666666666666666
+    }
+  },
+  "class_to_idx": {
+    "11": 0,
+    "12": 1,
+    "13": 2
+  },
+  "idx_to_class_code": {
+    "0": "11",
+    "1": "12",
+    "2": "13"
+  },
+  "models": {
+    "convnext_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_slope_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_slope_elevation/convnext_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_convnext_tiny/RGB_slope_elevation/inference_metadata.json"
+    },
+    "vit_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_slope_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_slope_elevation/vit_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_vit_tiny/RGB_slope_elevation/inference_metadata.json"
+    },
+    "swin_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_slope_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_slope_elevation/swin_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_swin_tiny/RGB_slope_elevation/inference_metadata.json"
+    },
+    "efficientnetv2_s": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_slope_elevation",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_slope_elevation/efficientnetv2_s_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/gs_efficientnetv2_s/RGB_slope_elevation/inference_metadata.json"
+    }
+  },
+  "weight_fitting_seconds": {
+    "weighted_probability_per_model": 0.005567750020418316,
+    "weighted_probability_per_model_class": 0.005063172022346407
+  },
+  "deployment_model_metadata_hashes": {
+    "convnext_tiny": "f04c0701ce24dd3174b12c3abb4ab3d8510a04c2b9306bf6bf0c017f99cc8ad0",
+    "vit_tiny": "179e548f42ed430765b9594754cc88f57c08369033d98e7f1b70290f95bbc9b0",
+    "swin_tiny": "3cdf32938f1189b8acd3ef9198c7c9bcf3ca23eef52b5e87806f93bc20df98e2",
+    "efficientnetv2_s": "564184059fc38101746e2e157acdb48e222adcbb3ab3de1112a710a144bac46d"
+  },
+  "weight_source": "pooled_single_split_validation_predictions_for_global_winners_not_test_labels"
+}
