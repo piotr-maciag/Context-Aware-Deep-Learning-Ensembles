@@ -136,7 +136,7 @@ overwrites that job's log and executed notebook.
 
 ## Full-Dataset Classification
 
-Choose the notebook for the intended saved model or ensemble:
+To classify all cells (either beach surface or grain-size) choose the notebook for the intended saved model or ensemble (based on conducted experiments there are four options currently):
 
 - `bs_classify_all_cells_convnext.ipynb`: ConvNeXt only.
 - `bs_classify_all_cells_weighted_ensemble.ipynb`: global model weights.
