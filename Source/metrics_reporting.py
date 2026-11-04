@@ -274,6 +274,174 @@ def prepare_bs_metrics_report(
     return selected_specs, predictions, comparison, pd.DataFrame(configuration_rows)
 
 
+def prepare_gs_metrics_report(
+    results_root: str | Path,
+    class_codes: Sequence[int],
+    class_names: Mapping[int, str],
+    *,
+    expected_cv_manifest: Mapping[str, object],
+    selection: str = "best_mean_heldout_macro_f1",
+    channel_setup: str | None = None,
+) -> dict[str, object]:
+    """Rank saved GS setups by fold means, retaining pooled predictions separately."""
+    import json
+    from Source.channel_setups import CHANNEL_SETUPS
+
+    if selection not in {"best_mean_heldout_macro_f1", "shared_channel_setup"}:
+        raise ValueError(f"Unknown grain-size report selection: {selection}")
+    if selection == "shared_channel_setup" and channel_setup not in CHANNEL_SETUPS:
+        raise ValueError("Shared reporting requires a valid channel setup")
+    comparison = load_channel_ablation_metrics(
+        results_root, "gs", class_codes, class_names, expected_cv_manifest=expected_cv_manifest,
+    )
+    eligible = comparison if selection == "best_mean_heldout_macro_f1" else comparison.loc[
+        comparison["Setup"] == channel_setup
+    ]
+    unavailable = eligible.loc[eligible.Status.ne("available")]
+    if not unavailable.empty:
+        raise ValueError("Incomplete or invalid GS results:\n" + unavailable.to_string(index=False))
+    loaded, setup_specs, fold_rows, class_rows = {}, {}, [], []
+    metric_map = {
+        "Accuracy": "accuracy", "Macro precision": "macro_precision",
+        "Macro recall": "macro_recall", "Macro F1": "macro_f1", "MCC": "mcc",
+    }
+    for setup in dict.fromkeys(comparison["Setup"]):
+        setup_mask = comparison.Setup.eq(setup)
+        if not comparison.loc[setup_mask, "Status"].eq("available").all():
+            comparison.loc[setup_mask, list(metric_map)] = np.nan
+            comparison.loc[setup_mask, "Status"] = "invalid"
+            comparison.loc[setup_mask, "Detail"] = "Incomplete setup: five-fold means are unavailable"
+            continue
+        specs = channel_setup_method_specs(results_root, "gs", setup)
+        setup_specs[setup] = specs
+        loaded[setup] = load_method_predictions(
+            specs, class_codes, expected_cv_manifest=expected_cv_manifest, expected_channel_setup=setup,
+        )
+        for spec in specs:
+            frame = pd.read_csv(spec["path"], dtype={"date": str, "cell_id": str})
+            frame = frame.sort_values(["date", "cell_id"]).reset_index(drop=True)
+            saved = pd.read_csv(Path(spec["path"]).parent / "fold_metrics_and_timing.csv")
+            if spec["type"] == "Ensemble":
+                key = str(spec["prediction_column"]).removesuffix("_predicted_class_code")
+                saved = saved.loc[saved["method"].eq(key)]
+            if len(saved) != 5 or set(saved.outer_fold) != {1, 2, 3, 4, 5}:
+                raise ValueError(f"{spec['name']}/{setup}: expected exactly five held-out fold records")
+            if set(frame.outer_fold) != set(saved.outer_fold):
+                raise ValueError(f"{spec['name']}/{setup}: prediction folds disagree with saved metrics")
+            full = loaded[setup][spec["name"]]
+            for fold, group in frame.groupby("outer_fold"):
+                subset = {key: np.asarray(full[key])[group.index] for key in ("y_true", "y_pred", "y_probability")}
+                subset["type"] = spec["type"]
+                metrics, per_class, _ = calculate_method_metrics({spec["name"]: subset}, class_codes, class_names)
+                timing = saved.loc[saved.outer_fold.eq(fold)].iloc[0].to_dict()
+                for label, column in metric_map.items():
+                    if not np.isclose(metrics.iloc[0][label], timing[column], rtol=0, atol=1e-10):
+                        raise ValueError(f"{spec['name']}/{setup}/fold {fold}: saved {column} differs from predictions")
+                fold_rows.append({**timing, **metrics.iloc[0].to_dict(), "Setup": setup})
+                per_class["Setup"], per_class["outer_fold"] = setup, fold
+                class_rows.extend(per_class.to_dict("records"))
+            mask = comparison.Setup.eq(setup) & comparison.Method.eq(spec["name"])
+            method_folds = [r for r in fold_rows if r["Setup"] == setup and r["Method"] == spec["name"]]
+            for label in metric_map:
+                values = [r[label] for r in method_folds]
+                comparison.loc[mask, label] = np.mean(values)
+                comparison.loc[mask, label + " SD"] = np.std(values, ddof=1)
+    eligible = comparison if selection == "best_mean_heldout_macro_f1" else comparison.loc[comparison.Setup.eq(channel_setup)]
+    winners = {
+        method: rows.loc[rows["Macro F1"].idxmax(), "Setup"]
+        for method, rows in eligible.groupby("Method", sort=False)
+    }
+    all_folds, all_classes = pd.DataFrame(fold_rows), pd.DataFrame(class_rows)
+    predictions, specs, configurations, selected_folds, selected_classes = {}, [], [], [], []
+    for method, setup in winners.items():
+        spec = dict(next(s for s in setup_specs[setup] if s["name"] == method))
+        parent = Path(spec["path"]).parent.parent
+        if spec["type"] == "Model":
+            radius = int(json.loads((parent / "inference_metadata.json").read_text())["context_radius"])
+        else:
+            radius = tuple(
+                int(json.loads((Path(results_root) / f"gs_{model}" / setup / "inference_metadata.json").read_text())["context_radius"])
+                for model in ENSEMBLE_CONTEXT_ORDER
+            )
+        spec.update(channel_setup=setup, context_radii=radius)
+        specs.append(spec)
+        predictions[method] = loaded[setup][method]
+        short_setup = CHANNEL_LABELS[setup].replace(" + slope", "+s").replace(" + elevation", "+d")
+        configurations.append({
+            "Method": method, "Setup": setup, "Channel setup": CHANNEL_LABELS[setup], "Context radii": radius,
+            "Plot label": f"{short_setup}; r={str(radius).replace(' ', '')}",
+        })
+        selected_folds.append(all_folds.loc[all_folds.Setup.eq(setup) & all_folds.Method.eq(method)])
+        selected_classes.append(all_classes.loc[all_classes.Setup.eq(setup) & all_classes.Method.eq(method)])
+    folds, classes = pd.concat(selected_folds, ignore_index=True), pd.concat(selected_classes, ignore_index=True)
+    aggregate = folds.groupby(["Method", "Type"], sort=False)[list(metric_map)].mean().reset_index()
+    deviations = folds.groupby("Method", sort=False)[list(metric_map)].std(ddof=1)
+    for column in metric_map:
+        aggregate[column + " SD"] = aggregate.Method.map(deviations[column])
+    mean_classes = classes.groupby(["Method", "Type", "Class", "Class name"], sort=False)[
+        ["Precision", "Recall", "F1-score"]
+    ].mean().reset_index()
+    deviations = classes.groupby(["Method", "Class"])[["Precision", "Recall", "F1-score"]].std(ddof=1)
+    for column in ("Precision", "Recall", "F1-score"):
+        mean_classes[column + " SD"] = [deviations.loc[(r.Method, r.Class), column] for r in mean_classes.itertuples()]
+    return {
+        "method_specs": specs, "predictions": predictions, "comparison": comparison,
+        "configurations": pd.DataFrame(configurations), "aggregate": aggregate,
+        "per_class": mean_classes, "fold_metrics": folds, "fold_per_class": classes,
+    }
+
+
+def print_latex_gs_fold_tables(aggregate, per_class, configurations, method):
+    """Print the same longtable structure as BS, with five-fold mean/SD cells."""
+    def print_table(columns, header, rows, caption, label):
+        print(r"\begin{longtable}{" + columns + "}")
+        print(r"\caption{" + caption + r"} \label{tab:" + label + r"} \\")
+        print(r"\toprule")
+        print(header)
+        print(r"\midrule" + "\n" + r"\endfirsthead")
+        print(r"\toprule")
+        print(header)
+        print(r"\midrule" + "\n" + r"\endhead")
+        print(r"\midrule" + "\n" + r"\endfoot")
+        print(r"\bottomrule" + "\n" + r"\endlastfoot")
+        for row in rows:
+            print(" & ".join(row) + r" \\")
+        print(r"\end{longtable}")
+    metrics = ["Accuracy", "Macro precision", "Macro recall", "Macro F1", "MCC"]
+    settings = configurations.set_index("Method").to_dict("index")
+    rows = []
+    for _, row in aggregate.iterrows():
+        values = []
+        for metric in metrics:
+            value = "$" + f"{row[metric]:.3f}" + r" \pm " + f"{row[metric + ' SD']:.3f}" + "$"
+            if row[metric] == aggregate[metric].max():
+                value = r"\cellcolor{gray!25}" + value
+            values.append(value)
+        rows.append([_latex_method_configuration(row.Method, settings[row.Method]), *values])
+    print_table(
+        "lrrrrr",
+        r"\textbf{Method} & \textbf{Acc.} & \textbf{Prec.} & \textbf{Rec.} & \textbf{F1-score} & \textbf{MCC} \\",
+        rows,
+        "Five-fold held-out grain-size metrics (mean " + r"$\pm$" +
+        " SD). Each method uses its reported channel setup and validation-selected context radii. "
+        "Ensemble radii follow EfficientNetV2-S, ViT-Tiny, Swin-Tiny, ConvNeXt-Tiny order. "
+        "The best unrounded metric means are shaded.",
+        "grain-size-aggregate-metrics",
+    )
+    rows = [
+        [str(int(row["Class"])), str(row["Class name"]), *[
+            "$" + f"{row[k]:.3f}" + r" \pm " + f"{row[k + ' SD']:.3f}" + "$"
+            for k in ("Precision", "Recall", "F1-score")
+        ]] for _, row in per_class.loc[per_class.Method.eq(method)].iterrows()
+    ]
+    print_table(
+        "rlrrr",
+        r"\textbf{Class} & \textbf{Class name} & \textbf{Precision} & \textbf{Recall} & \textbf{F1-score} \\",
+        rows, f"Per-class five-fold held-out metrics for {method} ({settings[method]['Channel setup']}); mean " + r"$\pm$" + " SD.",
+        "grain-size-per-class-metrics",
+    )
+
+
 def plot_channel_ablation_metrics(
     comparison: pd.DataFrame, figure_title: str,
 ) -> plt.Figure:
@@ -1027,6 +1195,7 @@ def print_latex_best_backbones_by_class(
     per_class_metrics: pd.DataFrame,
     dataset_label: str,
     label_prefix: str,
+    evaluation_label: str = "",
 ) -> None:
     backbone_metrics = per_class_metrics.loc[
         per_class_metrics["Type"] == "Model"
@@ -1071,7 +1240,7 @@ def print_latex_best_backbones_by_class(
     print(rf"\begin{{longtable}}{{{column_specification}}}")
     print(
         rf"\caption{{Standalone backbones achieving the highest class-specific "
-        rf"F1-score in the {dataset_label}. An X identifies the best result; "
+        rf"{evaluation_label + ' ' if evaluation_label else ''}F1-score in the {dataset_label}. An X identifies the best result; "
         rf"exact ties are retained.}} "
         rf"\label{{tab:{label_prefix}-best-backbone-per-class}} \\"
     )
@@ -1081,7 +1250,7 @@ def print_latex_best_backbones_by_class(
     print(r"\endfirsthead")
     print(
         rf"\caption[]{{Standalone backbones achieving the highest "
-        rf"class-specific F1-score in the {dataset_label}.}} \\"
+        rf"class-specific {evaluation_label + ' ' if evaluation_label else ''}F1-score in the {dataset_label}.}} \\"
     )
     print(r"\toprule")
     print(header)
