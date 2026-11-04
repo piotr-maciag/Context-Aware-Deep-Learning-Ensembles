@@ -37,6 +37,15 @@ CLASS_LINE_COLORS = {
 
 
 ABLATION_METRICS = ("Macro F1", "Accuracy", "Macro precision", "Macro recall", "MCC")
+CHANNEL_LABELS = {
+    "RGB_only": "RGB",
+    "RGB_slope": "RGB + slope",
+    "RGB_elevation": "RGB + elevation",
+    "RGB_slope_elevation": "RGB + slope + elevation",
+}
+ENSEMBLE_CONTEXT_ORDER = (
+    "efficientnetv2_s", "vit_tiny", "swin_tiny", "convnext_tiny",
+)
 
 
 def _validate_reporting_channels(metadata, setup, name):
@@ -177,6 +186,92 @@ def load_channel_ablation_metrics(
                         row.update(Status="invalid", Detail=str(error))
         rows.extend(setup_rows)
     return pd.DataFrame(rows)
+
+
+def prepare_bs_metrics_report(
+    results_root: str | Path,
+    class_codes: Sequence[int],
+    class_names: Mapping[int, str],
+    *,
+    selection: str = "best_test_macro_f1",
+    channel_setup: str | None = None,
+    expected_split_provenance: Mapping[str, object],
+    expected_evaluation_frame: pd.DataFrame,
+) -> tuple[list[dict[str, object]], dict, pd.DataFrame, pd.DataFrame]:
+    """Select saved BS results, without retuning radii or rebuilding ensembles.
+
+    Best-test channel ranking is descriptive, not an independent estimate of a
+    channel-selection procedure. All artifact checks stay within each setup so
+    an ensemble is never compared against a backbone from another setup.
+    """
+    import json
+    from Source.channel_setups import CHANNEL_SETUPS
+
+    if selection not in {"best_test_macro_f1", "shared_channel_setup"}:
+        raise ValueError(f"Unknown report selection: {selection}")
+    if selection == "shared_channel_setup" and channel_setup not in CHANNEL_SETUPS:
+        raise ValueError("Shared-setup reporting requires a valid channel_setup")
+    validation = {
+        "expected_split_provenance": expected_split_provenance,
+        "expected_evaluation_frame": expected_evaluation_frame,
+    }
+    comparison = load_channel_ablation_metrics(
+        results_root, "bs", class_codes, class_names, **validation,
+    )
+    eligible = comparison if selection == "best_test_macro_f1" else comparison.loc[
+        comparison["Setup"] == channel_setup
+    ]
+    unavailable = eligible.loc[eligible["Status"] != "available"]
+    if not unavailable.empty:
+        raise ValueError(
+            "Cannot select reporting results from incomplete or invalid artifacts:\n"
+            + unavailable[["Setup", "Method", "Status", "Detail"]].to_string(index=False)
+        )
+    selected_setups = {}
+    for method, candidates in eligible.groupby("Method", sort=False):
+        # idxmax uses unrounded F1; exact ties retain the defined setup order.
+        selected_setups[method] = candidates.loc[candidates["Macro F1"].idxmax(), "Setup"]
+    loaded_by_setup = {}
+    specs_by_setup = {}
+    for setup in dict.fromkeys(selected_setups.values()):
+        specs_by_setup[setup] = channel_setup_method_specs(results_root, "bs", setup)
+        loaded_by_setup[setup] = load_method_predictions(
+            specs_by_setup[setup], class_codes, expected_channel_setup=setup, **validation,
+        )
+
+    selected_specs, predictions, configuration_rows = [], {}, []
+    for method, setup in selected_setups.items():
+        spec = dict(next(item for item in specs_by_setup[setup] if item["name"] == method))
+        parent = Path(spec["path"]).parent
+        if spec["type"] == "Model":
+            metadata = json.loads((parent / "inference_metadata.json").read_text())
+            radii = (metadata["context_radius"],)
+        else:
+            definition = json.loads((parent / "ensemble_definition.json").read_text())
+            if set(definition["models"]) != set(ENSEMBLE_CONTEXT_ORDER):
+                raise ValueError(f"{method}: expected the four pretrained ensemble backbones")
+            radii = []
+            for model_type in ENSEMBLE_CONTEXT_ORDER:
+                # Remote absolute paths in exported definitions are not local paths.
+                metadata_path = Path(results_root) / f"bs_{model_type}" / setup / "inference_metadata.json"
+                metadata = json.loads(metadata_path.read_text())
+                radius = metadata["context_radius"]
+                if definition["models"][model_type]["context_radius"] != radius:
+                    raise ValueError(f"{method}: saved ensemble context differs for {model_type}")
+                radii.append(radius)
+        if any(isinstance(radius, bool) or not isinstance(radius, int) or radius < 0 for radius in radii):
+            raise ValueError(f"{method}: invalid saved context radii {radii}")
+        context = radii[0] if spec["type"] == "Model" else tuple(radii)
+        radius_label = str(context).replace(" ", "")
+        short_setup = CHANNEL_LABELS[setup].replace(" + slope", "+s").replace(" + elevation", "+d")
+        spec.update(channel_setup=setup, context_radii=context)
+        selected_specs.append(spec)
+        predictions[method] = loaded_by_setup[setup][method]
+        configuration_rows.append({
+            "Method": method, "Setup": setup, "Channel setup": CHANNEL_LABELS[setup],
+            "Context radii": context, "Plot label": f"{short_setup}; r={radius_label}",
+        })
+    return selected_specs, predictions, comparison, pd.DataFrame(configuration_rows)
 
 
 def plot_channel_ablation_metrics(
@@ -323,8 +418,15 @@ def load_method_predictions(
             raise ValueError(f"Duplicate date/cell_id pairs in {path}")
 
         frame = frame.sort_values(["date", "cell_id"]).reset_index(drop=True)
-        y_true = pd.to_numeric(frame["true_class_code"], errors="raise").astype(int)
-        y_pred = pd.to_numeric(frame[prediction_column], errors="raise").astype(int)
+        numeric_classes = frame[["true_class_code", prediction_column]].apply(pd.to_numeric, errors="raise")
+        if not np.isfinite(numeric_classes.to_numpy(float)).all() or (numeric_classes % 1 != 0).any().any():
+            raise ValueError(f"Class codes must be finite integers in {path}")
+        y_true = numeric_classes["true_class_code"].astype(int)
+        y_pred = numeric_classes[prediction_column].astype(int)
+        if "class" in frame and not np.array_equal(
+            pd.to_numeric(frame["class"], errors="raise").to_numpy(), y_true.to_numpy(),
+        ):
+            raise ValueError(f"True class codes disagree with evaluation labels in {path}")
         y_probability = frame[probability_columns].apply(
             pd.to_numeric,
             errors="raise",
@@ -333,6 +435,8 @@ def load_method_predictions(
             raise ValueError(f"Non-finite class probabilities in {path}")
         if ((y_probability < 0) | (y_probability > 1)).any():
             raise ValueError(f"Class probabilities outside [0, 1] in {path}")
+        if not np.allclose(y_probability.sum(axis=1), 1.0, rtol=0, atol=1e-5):
+            raise ValueError(f"Class probabilities do not sum to one in {path}")
         observed = set(y_true) | set(y_pred)
         if not observed.issubset(expected_classes):
             raise ValueError(f"Unexpected classes in {path}: {sorted(observed - expected_classes)}")
@@ -465,6 +569,7 @@ def plot_exact_confusion_matrices(
     columns: int = 3,
     panel_size: float | None = None,
     font_scale: float = 1.0,
+    panel_details: Mapping[str, str] | None = None,
 ) -> plt.Figure:
     rows = ceil(len(confusion_matrices) / columns)
     class_count = len(class_codes)
@@ -472,7 +577,7 @@ def plot_exact_confusion_matrices(
     figure = plt.figure(
         figsize=(
             columns * effective_panel_size,
-            rows * (effective_panel_size + 0.8),
+            rows * (effective_panel_size + 0.8 + (0.3 if panel_details is not None else 0)),
         )
     )
     grid = figure.add_gridspec(rows, columns * 2)
@@ -524,6 +629,8 @@ def plot_exact_confusion_matrices(
                 "Model-and-class weighted\nprobability voting"
             ),
         }.get(method, method)
+        if panel_details is not None:
+            display_title += f"\n{panel_details[method]}"
         axis.set_title(
             display_title,
             fontsize=11 * font_scale,
@@ -560,7 +667,10 @@ def plot_exact_confusion_matrices(
         ha="center",
         fontsize=10 * font_scale,
     )
-    figure.tight_layout(rect=(0, 0.085, 1, 0.97))
+    figure.tight_layout(
+        rect=(0, 0.085, 1, 0.97),
+        h_pad=3.0 if panel_details is not None else 1.08,
+    )
     return figure
 
 
@@ -572,6 +682,7 @@ def plot_multiclass_precision_recall_curves(
     columns: int = 3,
     panel_size: float = 4.2,
     font_scale: float = 1.0,
+    panel_details: Mapping[str, str] | None = None,
 ) -> plt.Figure:
     method_items = list(predictions.items())
     rows = ceil(len(method_items) / columns)
@@ -682,6 +793,8 @@ def plot_multiclass_precision_recall_curves(
                 "Model-and-class weighted\nprobability voting"
             ),
         }.get(method, method)
+        if panel_details is not None:
+            display_title += f"\n{panel_details[method]}"
         axis.set_title(
             f"{display_title}\nMacro AP = {macro_average_precision:.3f}",
             fontsize=11 * font_scale,
@@ -738,6 +851,17 @@ def plot_multiclass_precision_recall_curves(
     return figure
 
 
+def _latex_method_configuration(method: str, configuration: Mapping[str, object]) -> str:
+    method = method.replace(" weighted probability voting", r"\\weighted probability voting")
+    method = method.replace("weighted probability voting", r"weighted\\probability voting")
+    setup = CHANNEL_LABELS[str(configuration["Setup"])]
+    setup = setup.replace(" + elevation", r"\\+ elevation") if "slope" in setup else setup
+    context = configuration["Context radii"]
+    radius_label = str(context).replace(" ", "")
+    symbol = r"\mathbf{r}" if isinstance(context, tuple) else "r"
+    return rf"\shortstack[l]{{{method}\\{setup}\\${symbol}={radius_label}$}}"
+
+
 def print_latex_metric_tables(
     aggregate_metrics: pd.DataFrame,
     per_class_metrics: pd.DataFrame,
@@ -747,11 +871,24 @@ def print_latex_metric_tables(
     label_prefix: str,
     per_class_method_label: str,
     evaluation_label: str = "test-set",
+    method_configurations: pd.DataFrame | None = None,
+    selection_description: str = "",
 ) -> None:
+    configurations = {}
+    configuration_caption = ""
+    if method_configurations is not None:
+        configurations = method_configurations.set_index("Method", verify_integrity=True).to_dict("index")
+        if set(configurations) != set(aggregate_metrics["Method"]):
+            raise ValueError("Reporting configurations must match the aggregate methods")
+        configuration_caption = (
+            " Channel setups and saved context radii are shown below each method; "
+            "ensemble radii are ordered as EfficientNetV2-S, ViT-Tiny, Swin-Tiny, and ConvNeXt-Tiny."
+        )
     print("% Aggregate metrics")
     print(r"\begin{longtable}{lrrrrr}")
     print(
-        rf"\caption{{Aggregated {evaluation_label} metrics for the {dataset_label}.}} "
+        rf"\caption{{Aggregated {evaluation_label} metrics for the {dataset_label}."
+        rf"{configuration_caption}{selection_description}}} "
         rf"\label{{tab:{label_prefix}-aggregate-metrics}} \\"
     )
     print(r"\toprule")
@@ -792,8 +929,8 @@ def print_latex_metric_tables(
         "Macro F1",
         "MCC",
     ]
-    rounded_metrics = aggregate_metrics[metric_columns].round(3)
-    best_values = rounded_metrics.max()
+    metric_values = aggregate_metrics[metric_columns]
+    best_values = metric_values.max()
     previous_type = None
     for row_index, row in enumerate(aggregate_metrics.itertuples(index=False)):
         result_type = str(row[1])
@@ -801,9 +938,11 @@ def print_latex_metric_tables(
             print(r"\midrule")
         previous_type = result_type
         method = wrapped_method_names.get(str(row[0]), str(row[0]))
+        if configurations:
+            method = _latex_method_configuration(str(row[0]), configurations[str(row[0])])
         formatted_metrics = []
         for column_index, column in enumerate(metric_columns):
-            value = rounded_metrics.iloc[row_index, column_index]
+            value = metric_values.iloc[row_index, column_index]
             formatted = f"{value:.3f}"
             if value == best_values[column]:
                 formatted = rf"\cellcolor{{gray!25}}{formatted}"
@@ -813,9 +952,13 @@ def print_latex_metric_tables(
 
     print("% Per-class metrics")
     print(r"\begin{longtable}{rlrrr}")
+    per_class_setup = (
+        f" ({CHANNEL_LABELS[str(configurations[per_class_method_label]['Setup'])]})"
+        if configurations else ""
+    )
     print(
         rf"\caption{{Per-class {evaluation_label} metrics for \textbf{{{per_class_method_label}}} "
-        rf"ensemble on the {dataset_label}.}} "
+        rf"ensemble{per_class_setup} on the {dataset_label}.}} "
         rf"\label{{tab:{label_prefix}-per-class-metrics}} \\"
     )
     print(r"\toprule")
@@ -827,7 +970,7 @@ def print_latex_metric_tables(
     print(r"\endfirsthead")
     print(
         rf"\caption[]{{Per-class {evaluation_label} metrics for "
-        rf"\textbf{{{per_class_method_label}}} ensemble on the {dataset_label}.}} \\"
+        rf"\textbf{{{per_class_method_label}}} ensemble{per_class_setup} on the {dataset_label}.}} \\"
     )
     print(r"\toprule")
     print(
@@ -870,7 +1013,11 @@ def print_latex_metric_tables(
         print(
             matrix_frame.to_latex(
                 escape=True,
-                caption=f"Exact {evaluation_label} confusion matrix for {method} on the {dataset_label}.",
+                caption=(
+                    f"Exact {evaluation_label} confusion matrix for {method} on the {dataset_label}."
+                    + (f" Channels: {CHANNEL_LABELS[str(configurations[method]['Setup'])]}; "
+                       f"context radii: {configurations[method]['Context radii']}." if configurations else "")
+                ),
                 label=f"tab:{label_prefix}-{slug}-confusion-matrix",
             )
         )
@@ -976,6 +1123,7 @@ def print_latex_best_grid_search_configurations(
     dataset_label: str,
     label_prefix: str,
     selection_description: str = "on the validation set",
+    model_channel_setups: Mapping[str, str] | None = None,
 ) -> None:
     header = (
         r"\textbf{Model} & "
@@ -1014,8 +1162,12 @@ def print_latex_best_grid_search_configurations(
 
     for row in configurations.itertuples(index=False):
         dropout = "--" if pd.isna(row[3]) else f"{row[3]:g}"
+        model = str(row[0])
+        if model_channel_setups is not None:
+            setup = CHANNEL_LABELS[model_channel_setups[model]]
+            model = rf"\shortstack[l]{{{model}\\{setup}}}"
         print(
-            f"{row[0]} & {row[1]:.0e} & {row[2]:.0e} & {dropout} & "
+            f"{model} & {row[1]:.0e} & {row[2]:.0e} & {dropout} & "
             f"{int(row[4])} & {row[5]:.3f} \\\\"
         )
     print(r"\end{longtable}")
