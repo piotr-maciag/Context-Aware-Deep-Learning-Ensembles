@@ -192,7 +192,7 @@ Training timings include epoch validation; prediction timings include data
 loading. Do not count shared backbone costs separately for each ensemble rule.
 
 Both reporting notebooks expose **`FIGURE_DIR` near the top**. Its current
-default is `../Beach_classification_manscript/fig/`, relative to the project
+default is `../manuscript/fig/`, relative to the project
 root. Change it for another layout, or set it to `None` to disable PDF export.
 
 ## Funding
