@@ -1,0 +1,7 @@
+class,class_name,train,validation,test,total
+1,Water,1207,279,335,1821
+2,Sand,1301,300,360,1961
+3,Gravel,75,17,21,113
+4,Cobble/boulder,32,7,9,48
+5,Vegetated,2699,623,748,4070
+6,Development,72,17,20,109
