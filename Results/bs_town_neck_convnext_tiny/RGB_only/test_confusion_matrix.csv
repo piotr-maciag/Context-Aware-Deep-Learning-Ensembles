@@ -1,0 +1,7 @@
+,1: Water,2: Sand,3: Gravel,4: Cobble/boulder,5: Vegetated,6: Development
+1: Water,322,12,0,0,1,0
+2: Sand,0,359,0,0,1,0
+3: Gravel,1,19,1,0,0,0
+4: Cobble/boulder,0,4,0,5,0,0
+5: Vegetated,2,11,4,0,729,2
+6: Development,0,0,0,0,0,20

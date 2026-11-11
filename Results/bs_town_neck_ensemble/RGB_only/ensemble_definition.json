@@ -1,0 +1,268 @@
+{
+  "deployment_model_metadata_hashes": {
+    "convnext_tiny": "c75ad00807965e9739e1dd4588b907641f7ea74197248c07bb25c64bbc65c388",
+    "vit_tiny": "2698e66432da6e5489e49509d87025d345d50b4343b363657fb61a3a9561df58",
+    "swin_tiny": "78d80f882e9709debbb8787621fba850bed7ac0ab9d1d4dd118a07eb1baefc0f",
+    "efficientnetv2_s": "bbc602431725916033637e7c31c03717bb3bb65e88440627cfbf30762e6af6dc"
+  },
+  "channel_setup": "RGB_only",
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b"
+  ],
+  "split_provenance": {
+    "policy": "town_neck_stratified_sample_spatial_blocks_v1",
+    "random_seed": 42,
+    "raw_dataset": "Data/Raw/bs_town_neck",
+    "channels": [
+      "r",
+      "g",
+      "b"
+    ],
+    "grid_rows": 559,
+    "grid_columns": 454,
+    "max_context_radius": 3,
+    "block_size_cells": 32,
+    "block_size_m": 32,
+    "block_edge_exclusion_cells": 3,
+    "block_assignment_attempt": 6,
+    "block_assignment_criterion": "Class quota availability only, never model performance",
+    "sampling": "Without replacement, proportional to the full eligible descriptor's class counts",
+    "requested_split_sizes": {
+      "train": 5386,
+      "validation": 1243,
+      "test": 1493
+    },
+    "total_sampled_targets": 8122,
+    "eligible_raw_targets": 233343,
+    "targets_after_block_buffers": 152578,
+    "context_overlap_cells": {
+      "train/validation": 0,
+      "train/test": 0,
+      "validation/test": 0
+    },
+    "context_footprint_cells": {
+      "train": 118642,
+      "validation": 28187,
+      "test": 32549
+    },
+    "class_counts": {
+      "train": {
+        "1": 1207,
+        "2": 1301,
+        "3": 75,
+        "4": 32,
+        "5": 2699,
+        "6": 72
+      },
+      "validation": {
+        "1": 279,
+        "2": 300,
+        "3": 17,
+        "4": 7,
+        "5": 623,
+        "6": 17
+      },
+      "test": {
+        "1": 335,
+        "2": 360,
+        "3": 21,
+        "4": 9,
+        "5": 748,
+        "6": 20
+      }
+    },
+    "raw_descriptor_sha256": "c43ed6f8b7b9b2a5c5d69309fa5e8bf86fc2b30daa347836f8339513e72ac7a8",
+    "raw_grid_metadata_sha256": "83664563e35a4c84499f53d3f3b0fbcad019043a5a631585641f39b0e4709c15",
+    "csv_sha256": {
+      "train": "01b9ed894dcd395f9e01318c66c830d34b470a63b91020647c7e779ae992c64f",
+      "validation": "a88612aac83fd82d9d5526851a913c8422e7735780869857b80d82e459187896",
+      "test": "8fbbe6bae3e63caee827fa00236d862f5e4a209bfeb8ae8a39d38e4d29099162",
+      "all": "d118afa9680e8abba1c1bb83d923c9e898b21fa5adae087b1815e5ccffe4f259"
+    },
+    "imputation": "Not applied; future normalization and missing-value means must use training only",
+    "notes": [
+      "Block-wise holdout within a single survey, not survey-date or cross-beach holdout",
+      "All radii 0, 1, 2, 3 share these exact targets and partitions",
+      "Read available RGB context from the full raw dataset; missing context needs training means",
+      "Existing Svalbard training/split validation helpers require separate Town Neck configuration"
+    ]
+  },
+  "selection_metric": "validation_macro_f1",
+  "candidate_methods": [
+    "hard_voting",
+    "probability_voting",
+    "weighted_probability_per_model",
+    "weighted_probability_per_model_class"
+  ],
+  "validation_selected_method": "hard_voting",
+  "validation_search": [
+    {
+      "method": "hard_voting",
+      "accuracy": 0.9654062751407884,
+      "mcc": 0.9463968634719871,
+      "macro_precision": 0.8651168605230765,
+      "macro_recall": 0.8837202773663128,
+      "macro_f1": 0.870853329332591,
+      "weighted_f1": 0.965174312518558,
+      "selected": true
+    },
+    {
+      "method": "probability_voting",
+      "accuracy": 0.9629927594529365,
+      "mcc": 0.9428148402619033,
+      "macro_precision": 0.8345194601576665,
+      "macro_recall": 0.8545965454765532,
+      "macro_f1": 0.8359897868628763,
+      "weighted_f1": 0.9620896398995954,
+      "selected": false
+    },
+    {
+      "method": "weighted_probability_per_model",
+      "accuracy": 0.9637972646822205,
+      "mcc": 0.9440690648892127,
+      "macro_precision": 0.8420220721864596,
+      "macro_recall": 0.8551521010321087,
+      "macro_f1": 0.8405270474877845,
+      "weighted_f1": 0.9628485662078103,
+      "selected": false
+    },
+    {
+      "method": "weighted_probability_per_model_class",
+      "accuracy": 0.9637972646822205,
+      "mcc": 0.9440690648892127,
+      "macro_precision": 0.8420220721864596,
+      "macro_recall": 0.8551521010321087,
+      "macro_f1": 0.8405270474877845,
+      "weighted_f1": 0.9628485662078103,
+      "selected": false
+    }
+  ],
+  "global_model_weights": {
+    "convnext_tiny": 0.25477161151483274,
+    "vit_tiny": 0.24785017673886775,
+    "swin_tiny": 0.24981673572709476,
+    "efficientnetv2_s": 0.2475614760192047
+  },
+  "validation_model_macro_f1": {
+    "convnext_tiny": 0.8266821183749999,
+    "vit_tiny": 0.8042234687288795,
+    "swin_tiny": 0.8106045531072787,
+    "efficientnetv2_s": 0.8032866935478129
+  },
+  "weights_by_model_and_class": {
+    "convnext_tiny": {
+      "1": 0.25210292361989434,
+      "2": 0.2492188625855663,
+      "3": 0.21292333973948324,
+      "4": 0.2768860353130016,
+      "5": 0.25206240404608177,
+      "6": 0.2694735332090088
+    },
+    "vit_tiny": {
+      "1": 0.25365017457697625,
+      "2": 0.2520483615378057,
+      "3": 0.22850309630578688,
+      "4": 0.22150882825040127,
+      "5": 0.2526867158701432,
+      "6": 0.2610816238703199
+    },
+    "swin_tiny": {
+      "1": 0.2414319003978882,
+      "2": 0.24755055991111713,
+      "3": 0.33899636984838777,
+      "4": 0.2247191011235955,
+      "5": 0.24598192738934338,
+      "6": 0.2418352221106489
+    },
+    "efficientnetv2_s": {
+      "1": 0.2528150014052411,
+      "2": 0.2511822159655108,
+      "3": 0.21957719410634208,
+      "4": 0.2768860353130016,
+      "5": 0.24926895269443175,
+      "6": 0.22760962081002248
+    }
+  },
+  "validation_f1_by_model_and_class": {
+    "convnext_tiny": {
+      "1": 0.9686924493554327,
+      "2": 0.9266770670826833,
+      "3": 0.36363636363636365,
+      "4": 0.75,
+      "5": 0.9796582587469488,
+      "6": 0.9714285714285714
+    },
+    "vit_tiny": {
+      "1": 0.9746376811594203,
+      "2": 0.9371980676328503,
+      "3": 0.3902439024390244,
+      "4": 0.6,
+      "5": 0.9820846905537459,
+      "6": 0.9411764705882353
+    },
+    "swin_tiny": {
+      "1": 0.927689594356261,
+      "2": 0.9204737732656514,
+      "3": 0.5789473684210527,
+      "4": 0.6086956521739131,
+      "5": 0.9560260586319218,
+      "6": 0.8717948717948718
+    },
+    "efficientnetv2_s": {
+      "1": 0.9714285714285714,
+      "2": 0.9339774557165862,
+      "3": 0.375,
+      "4": 0.75,
+      "5": 0.9688013136288999,
+      "6": 0.8205128205128205
+    }
+  },
+  "class_to_idx": {
+    "1": 0,
+    "2": 1,
+    "3": 2,
+    "4": 3,
+    "5": 4,
+    "6": 5
+  },
+  "idx_to_class_code": {
+    "0": "1",
+    "1": "2",
+    "2": "3",
+    "3": "4",
+    "4": "5",
+    "5": "6"
+  },
+  "models": {
+    "convnext_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_convnext_tiny/RGB_only",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_convnext_tiny/RGB_only/convnext_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_convnext_tiny/RGB_only/inference_metadata.json",
+      "context_radius": 3,
+      "image_size": 224
+    },
+    "vit_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_vit_tiny/RGB_only",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_vit_tiny/RGB_only/vit_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_vit_tiny/RGB_only/inference_metadata.json",
+      "context_radius": 3,
+      "image_size": 224
+    },
+    "swin_tiny": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_swin_tiny/RGB_only",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_swin_tiny/RGB_only/swin_tiny_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_swin_tiny/RGB_only/inference_metadata.json",
+      "context_radius": 2,
+      "image_size": 224
+    },
+    "efficientnetv2_s": {
+      "result_dir": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_efficientnetv2_s/RGB_only",
+      "checkpoint_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_efficientnetv2_s/RGB_only/efficientnetv2_s_best.pt",
+      "metadata_path": "/workspace/pmaciag-volume-beach/Results/bs_town_neck_efficientnetv2_s/RGB_only/inference_metadata.json",
+      "context_radius": 3,
+      "image_size": 224
+    }
+  }
+}

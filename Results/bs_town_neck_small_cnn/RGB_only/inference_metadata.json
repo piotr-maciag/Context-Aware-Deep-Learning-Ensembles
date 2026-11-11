@@ -1,0 +1,153 @@
+{
+  "initialization": {
+    "type": "svalbard_rgb_checkpoint",
+    "model_type": "small_cnn",
+    "checkpoint_sha256": "8c802e9c238480f315e15b0050dee93a72cb392610f4713b562d370cc185503c",
+    "source_context_radius": 1,
+    "source_best_config": {
+      "learning_rate": 0.0001,
+      "weight_decay": 0.001,
+      "dropout": 0.4,
+      "context_radius": 1,
+      "channel_setup": "RGB_only"
+    },
+    "output_layer": "fresh six-class linear layer",
+    "trainable_layers": "all"
+  },
+  "dataset": "Town Neck Beach",
+  "grid_rows": 559,
+  "grid_columns": 454,
+  "channel_setup": "RGB_only",
+  "model_type": "small_cnn",
+  "checkpoint_filename": "small_cnn_best.pt",
+  "checkpoint_sha256": "b09621c4615881befe9fa486c7ca90c9297905cd662b65d54745bfc154cf66e3",
+  "split_provenance": {
+    "policy": "town_neck_stratified_sample_spatial_blocks_v1",
+    "random_seed": 42,
+    "raw_dataset": "Data/Raw/bs_town_neck",
+    "channels": [
+      "r",
+      "g",
+      "b"
+    ],
+    "grid_rows": 559,
+    "grid_columns": 454,
+    "max_context_radius": 3,
+    "block_size_cells": 32,
+    "block_size_m": 32,
+    "block_edge_exclusion_cells": 3,
+    "block_assignment_attempt": 6,
+    "block_assignment_criterion": "Class quota availability only, never model performance",
+    "sampling": "Without replacement, proportional to the full eligible descriptor's class counts",
+    "requested_split_sizes": {
+      "train": 5386,
+      "validation": 1243,
+      "test": 1493
+    },
+    "total_sampled_targets": 8122,
+    "eligible_raw_targets": 233343,
+    "targets_after_block_buffers": 152578,
+    "context_overlap_cells": {
+      "train/validation": 0,
+      "train/test": 0,
+      "validation/test": 0
+    },
+    "context_footprint_cells": {
+      "train": 118642,
+      "validation": 28187,
+      "test": 32549
+    },
+    "class_counts": {
+      "train": {
+        "1": 1207,
+        "2": 1301,
+        "3": 75,
+        "4": 32,
+        "5": 2699,
+        "6": 72
+      },
+      "validation": {
+        "1": 279,
+        "2": 300,
+        "3": 17,
+        "4": 7,
+        "5": 623,
+        "6": 17
+      },
+      "test": {
+        "1": 335,
+        "2": 360,
+        "3": 21,
+        "4": 9,
+        "5": 748,
+        "6": 20
+      }
+    },
+    "raw_descriptor_sha256": "c43ed6f8b7b9b2a5c5d69309fa5e8bf86fc2b30daa347836f8339513e72ac7a8",
+    "raw_grid_metadata_sha256": "83664563e35a4c84499f53d3f3b0fbcad019043a5a631585641f39b0e4709c15",
+    "csv_sha256": {
+      "train": "01b9ed894dcd395f9e01318c66c830d34b470a63b91020647c7e779ae992c64f",
+      "validation": "a88612aac83fd82d9d5526851a913c8422e7735780869857b80d82e459187896",
+      "test": "8fbbe6bae3e63caee827fa00236d862f5e4a209bfeb8ae8a39d38e4d29099162",
+      "all": "d118afa9680e8abba1c1bb83d923c9e898b21fa5adae087b1815e5ccffe4f259"
+    },
+    "imputation": "Not applied; future normalization and missing-value means must use training only",
+    "notes": [
+      "Block-wise holdout within a single survey, not survey-date or cross-beach holdout",
+      "All radii 0, 1, 2, 3 share these exact targets and partitions",
+      "Read available RGB context from the full raw dataset; missing context needs training means",
+      "Existing Svalbard training/split validation helpers require separate Town Neck configuration"
+    ]
+  },
+  "image_size": 60,
+  "context_radius": 1,
+  "context_window_size": 3,
+  "feature_suffixes": [
+    "r",
+    "g",
+    "b"
+  ],
+  "in_channels": 3,
+  "num_classes": 6,
+  "class_to_idx": {
+    "1": 0,
+    "2": 1,
+    "3": 2,
+    "4": 3,
+    "5": 4,
+    "6": 5
+  },
+  "idx_to_class_code": {
+    "0": "1",
+    "1": "2",
+    "2": "3",
+    "3": "4",
+    "4": "5",
+    "5": "6"
+  },
+  "class_name_by_code": {
+    "1": "Water",
+    "2": "Sand",
+    "3": "Gravel",
+    "4": "Cobble/boulder",
+    "5": "Vegetated",
+    "6": "Development"
+  },
+  "best_config": {
+    "learning_rate": 0.0001,
+    "weight_decay": 0.001,
+    "dropout": 0.4,
+    "context_radius": 1,
+    "channel_setup": "RGB_only"
+  },
+  "channel_mean": [
+    120.49439239501953,
+    120.5899429321289,
+    89.10352325439453
+  ],
+  "channel_std": [
+    44.56134796142578,
+    37.03047180175781,
+    42.558128356933594
+  ]
+}

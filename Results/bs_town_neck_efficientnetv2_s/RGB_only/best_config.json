@@ -1,0 +1,8 @@
+{
+  "learning_rate": 3e-05,
+  "weight_decay": 0.001,
+  "dropout": 0.3,
+  "pretrained": false,
+  "context_radius": 3,
+  "channel_setup": "RGB_only"
+}
